@@ -114,6 +114,17 @@ already pending and do nothing."
 (defmethod sb-gray:stream-line-column ((stream listener-output-stream))
   (stream-column stream))
 
+(defparameter *transcript-line-length* 100
+  "How wide the pretty printer may assume the transcript is.
+
+Without STREAM-LINE-LENGTH the printer has to guess, and it guesses narrow: a
+TYPE-ERROR's report came out as five ragged lines -- `The value', `7', `is not
+of type', `LIST' -- which reads like a bug in the listener rather than a
+sentence.  The window is about 108 monospaced columns at its default size.")
+
+(defmethod sb-gray:stream-line-length ((stream listener-output-stream))
+  *transcript-line-length*)
+
 (defmethod sb-gray:stream-force-output ((stream listener-output-stream))
   (schedule-flush stream)
   nil)

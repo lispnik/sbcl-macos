@@ -197,6 +197,12 @@ Errors go to the debugger hook, not to here."
     (cond
       ((eq form +eof+) nil)
       (t
+       ;; The view appended the newline the user pressed, so the transcript is
+       ;; already at the start of a line -- but the output stream last wrote the
+       ;; prompt and still believes it is nine columns in.  Without this,
+       ;; FRESH-LINE below emits a newline that is already on screen and every
+       ;; single value gets a blank line above it.
+       (setf (stream-column (listener-output listener)) 0)
        (setf - form)
        (let ((values (multiple-value-list (eval form))))
          (shift-values form values)

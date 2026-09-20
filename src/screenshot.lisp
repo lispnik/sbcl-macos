@@ -205,9 +205,13 @@ Exit code 0 only when every shot was written."
     (unless (wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 20)
       (note "screenshots: no prompt after 20s; the listener never started.")
       (finish-and-exit 3))
+    ;; One continuous session, so each picture carries the ones before it.  The
+    ;; debugger therefore goes LAST: taken in the middle, its condition and
+    ;; restarts would sit above the interrupt shot, which has nothing to do with
+    ;; them and is the harder picture to read for it.
     (let ((results (list (cons "session" (shoot-session listener directory))
-                         (cons "debugger" (shoot-debugger listener directory))
-                         (cons "interrupt" (shoot-interrupt listener directory)))))
+                         (cons "interrupt" (shoot-interrupt listener directory))
+                         (cons "debugger" (shoot-debugger listener directory)))))
       (let ((missing (mapcar #'car (remove-if #'cdr results))))
         (note "screenshots: ~d of ~d written~@[; missing: ~{~a~^, ~}~]"
               (count-if #'cdr results) (length results) missing)
