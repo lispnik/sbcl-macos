@@ -154,16 +154,23 @@ TRIM-LISTENER-FRAMES may drop some."
           (format stream "  ~a~%" line))))))
 
 (defun print-restarts (listener restarts)
+  "The numbered list in the transcript.
+
+The ellipsis marks the restarts that will stop and ask for a value, the same
+as the panel's rows do -- see RESTART-ASKS-P.  Both doors open on the same
+list, so both have to say the same thing about it; marking only the one with
+buttons would make typing 3 and clicking row 3 look like different acts."
   (let ((stream (listener-output listener)))
     (with-output-kind (stream :error)
       (format stream "~&Restarts:~%")
       (loop for restart in restarts
             for index from 0
-            do (format stream "  ~2d: [~a] ~a~%"
+            do (format stream "  ~2d: [~a] ~a~@[~a~]~%"
                        index
                        (or (restart-name restart) "ANONYMOUS")
                        (handler-case (princ-to-string restart)
-                         (error () "(unprintable restart)")))))))
+                         (error () "(unprintable restart)"))
+                       (and (restart-asks-p restart) " …"))))))
 
 (defun drain-pending-whitespace (stream)
   "Consume whitespace already buffered on STREAM, without ever blocking.

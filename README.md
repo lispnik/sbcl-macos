@@ -185,7 +185,10 @@ and SBCL's prints `Enter a form to be evaluated:` and reads one back — on
 
 The ellipsis is the Mac convention for a control that opens a prompt rather
 than acting, and it is read from the restart itself, so it appears for anything
-a handler established with an `:interactive` clause, not for a fixed list.
+a handler established with an `:interactive` clause, not for a fixed list. The
+transcript's numbered list is marked the same way — two doors onto one list of
+restarts have to agree about it, or typing `1` and clicking row 1 would look
+like different acts.
 
 Clicking such a row works exactly as clicking any other: the panel hides, the
 number is typed into the window, and the interactive function's question and

@@ -151,9 +151,10 @@ debugger that established it."
 That is what a restart's interactive function IS -- INVOKE-RESTART-INTERACTIVELY
 calls it, and SBCL's for USE-VALUE and STORE-VALUE print `Enter a form to be
 evaluated: ' and READ one back.  So clicking such a row does not finish the
-job, it starts a conversation in the transcript, and a trailing ellipsis is the
-Mac convention for exactly that: a control that opens a prompt rather than
-acting.
+job, it starts a conversation in the transcript, and a trailing ellipsis is the Mac
+convention for exactly that: a control that opens a prompt rather than acting.
+Both the panel's rows and the transcript's numbered list are marked from here,
+because they are two doors onto one list and must agree about it.
 
 There is no portable predicate for this, so this reads an SBCL internal behind
 IGNORE-ERRORS and answers NIL if it ever goes away.  Losing an ellipsis is the

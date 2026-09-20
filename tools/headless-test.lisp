@@ -149,6 +149,11 @@ inherited that would be testing the case before it."
     "USE-VALUE: an interactive restart prompts, and its value is used."
   (say listener "(symbol-value '*no-such-variable-at-all*)")
   (check-text listener "Restarts:" "an unbound variable enters the debugger")
+  ;; The transcript's list marks the rows that will ask, as the panel's does.
+  (check-text listener (format nil "Use specified value. …")
+              "USE-VALUE is marked with an ellipsis in the transcript")
+  (check (not (search (format nil "top level. …") (transcript-so-far listener)))
+         "ABORT, which does not ask, is not marked")
   ;; 1 is USE-VALUE, whose interactive function prompts for a form.
   (say listener "1")
   (check-text listener "Enter a form to be evaluated" "USE-VALUE prompts")
