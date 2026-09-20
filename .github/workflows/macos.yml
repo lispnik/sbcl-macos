@@ -293,7 +293,16 @@ jobs:
           # The committed copies should match what the application produces
           # now.  A difference is not a failure -- it usually means the
           # screenshots are due to be refreshed -- but it should be visible.
-          for shot in session debugger interrupt restarts; do
+          #
+          # Only these two, and that is not an oversight.  Any picture showing a
+          # restart list contains SBCL's per-thread abort restart, which reports
+          # as `abort thread (#<THREAD tid=64787 ...>)' -- a number that is
+          # different on every run.  debugger.png and restarts.png therefore
+          # CANNOT match a committed copy, ever, and warning that they differ
+          # would fire forever and teach everyone to ignore the warning.  These
+          # two carry no thread id and have been observed identical across runs,
+          # so a difference in them means something really changed.
+          for shot in session interrupt; do
             cmp -s "$LISP_LISTENER_SCREENSHOT/$shot.png" "doc/screenshots/$shot.png" \
               || echo "::warning::doc/screenshots/$shot.png differs from this run; refresh it"
           done
