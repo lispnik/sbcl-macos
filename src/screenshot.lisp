@@ -165,7 +165,13 @@ The window is pumped for two seconds while (LOOP) runs, which is the claim the
 two-thread design makes: evaluation is on another thread, so AppKit is free.
 The picture is taken after the interrupt, because that is the part a still
 image can actually show -- the form, then a fresh prompt below it."
-  (type-and-submit listener "(loop)")
+  ;; (LOOP (SLEEP ...)) rather than a bare (LOOP).  On a safepoint build an
+  ;; interrupt is delivered at a safepoint poll instead of by a signal, and an
+  ;; empty tight loop is the one shape that may carry none -- the interrupt
+  ;; would never arrive and this would hang until the alarm killed it.  SLEEP
+  ;; is interruptible for certain, and is a fairer picture of a long
+  ;; computation than a spin.
+  (type-and-submit listener "(loop (sleep 0.1))")
   (pump-for 2d0)
   (let ((responsive (not (waiting-at-top-level-p listener))))
     (unless responsive

@@ -15,6 +15,23 @@ it is defined from Lisp, through
 (lisp-listener:run-listener)
 ```
 
+![A listener session](doc/screenshots/session.png)
+
+The debugger prints the condition and a numbered restart list, and the prompt
+becomes `[1] CL-USER>`. Type a number to take a restart, or any form to evaluate
+it at that level.
+
+![The debugger](doc/screenshots/debugger.png)
+
+Evaluation is on another thread, so a form that never returns leaves the window
+responsive, and Interrupt (⌘.) gets the prompt back.
+
+![Interrupting a long-running form](doc/screenshots/interrupt.png)
+
+These three are not staged. `src/screenshot.lisp` drives a real listener and
+photographs it, and `.github/workflows/macos.yml` runs it on every push — so
+they are always a picture of the current code, taken on a GitHub macOS runner.
+
 ## Requirements
 
 - macOS on arm64 or Intel.
@@ -143,9 +160,14 @@ compiles `src/` against `tools/stubs/`, which supplies exactly the names `src/`
 uses, so the compiler reports undefined functions, wrong argument counts and
 macros that will not expand.
 
-Neither tells you the program works. Only a Mac does that. If you change either
-checker, break a file on purpose and confirm it goes red — "no offenders" is
-also what an empty scan says.
+Neither tells you the program works. Only a Mac does that — which is what
+`.github/workflows/macos.yml` is for: it builds SBCL `--with-sb-safepoint`,
+verifies the build really has them, runs the listener's self-test, builds
+`Lisp Listener.app` and runs the bundle's self-test, on both arm64 and Intel.
+`.github/workflows/check.yml` runs the two checks above on Linux in seconds.
+
+If you change either checker, break a file on purpose and confirm it goes red —
+"no offenders" is also what an empty scan says.
 
 ## Known limits
 

@@ -231,7 +231,7 @@ jobs:
           export LISP_LISTENER_SELFTEST="$PWD/bundle-selftest.png"
           perl -e 'alarm shift; exec @ARGV' 180 \
             env -u SBCL_HOME "$APP/Contents/MacOS/lisp-listener" || true
-          cat "$MACOS_APP_LOG"
+          cat "$MACOS_APP_LOG" || echo "(the bundle wrote no log at all)"
           grep -q "selftest: (+ 1 2) => 3" "$MACOS_APP_LOG" \
             || { echo "::error::the bundled listener did not evaluate (+ 1 2)" >&2; exit 1; }
 

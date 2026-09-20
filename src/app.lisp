@@ -194,6 +194,12 @@ Does not return: -[NSApplication run] does not."
   ;; in the transcript machinery has nowhere else to be reported, and "nothing
   ;; happened and nothing was logged" is the worst outcome available.
   (setf *log* *error-output*)
+  ;; Initialize BEFORE asking about the window server.  WINDOW-SERVER-P answers
+  ;; NIL on any error, so asking it first would report "no window server" for a
+  ;; runtime that simply had not been brought up yet -- a plausible message for
+  ;; the wrong reason.  ENSURE-OBJC-INITIALIZED is idempotent and BUILD-LISTENER
+  ;; calls it again.
+  (objc:ensure-objc-initialized :modules (list +cocoa-framework+))
   (require-window-server)
   (let ((listener (build-listener)))
     (cond
