@@ -175,7 +175,7 @@ image can actually show -- the form, then a fresh prompt below it."
   (pump-for 2d0)
   (let ((responsive (not (waiting-at-top-level-p listener))))
     (unless responsive
-      (note "screenshots: (loop) did not hold the listener; the shot is wrong"))
+      (note "screenshots: the loop did not hold the listener; the shot is wrong"))
     (abort-evaluation listener)
     (and (wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 10)
          (capture listener directory "interrupt.png"))))

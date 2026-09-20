@@ -238,15 +238,27 @@ Errors go to the debugger hook, not to here."
           (unless live (return)))))))
 
 (defun start-listener-thread (listener)
-  "Start the listener.  Called LAST, once there is a view to talk to."
+  "Start the listener.  Called LAST, once there is a view to talk to.
+
+UNWIND-PROTECT, and never HANDLER-CASE.  A handler for ERROR established out
+here HANDLES the condition, and a handled condition never reaches
+INVOKE-DEBUGGER -- so *DEBUGGER-HOOK* would not run, and an error in an
+evaluated form would quietly restart the listener instead of showing its
+restarts.  The whole debugger would be dead code and nothing would say so.
+
+That is not hypothetical.  This function had exactly that shape, the debugger
+had never once run, and the first CI run that reached it reported
+`the listener restarted after: The value 7 is not of type LIST' where a restart
+list should have been.  It is the reason the screenshot of the debugger is
+worth taking: it is the only check here that exercises the path at all.
+
+Nothing should escape LISTENER-LOOP in any case -- the hook it binds does not
+return.  If something does, the thread ends and says so on the way out."
   (setf (listener-thread listener)
         (bt:make-thread
          (lambda ()
-           (loop
-             (handler-case (progn (listener-loop listener) (return))
-               (error (condition)
-                 (note "the listener restarted after: ~a" condition)
-                 (sleep 0.1)))))
+           (unwind-protect (listener-loop listener)
+             (note "the listener thread has ended.")))
          :name "lisp listener"))
   listener)
 

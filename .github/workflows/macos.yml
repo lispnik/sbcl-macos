@@ -258,7 +258,10 @@ jobs:
           done
 
       - name: Keep the pictures
-        if: matrix.arch == 'arm64'
+        # always(): when a shot comes out wrong the picture IS the diagnosis,
+        # and skipping the upload on failure hides exactly the run worth
+        # looking at.
+        if: always() && matrix.arch == 'arm64'
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
