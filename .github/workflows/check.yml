@@ -1,9 +1,12 @@
 # The checks that need no Mac.
 #
-# This system cannot be LOADED off macOS at all -- lispnik/objc opens
-# /usr/lib/libobjc.A.dylib as it initializes -- so these two are everything
-# that can be said about the code without a runner: does it parse, and does it
-# compile against a stand-in for the frameworks.  Neither says it works.
+# The full system cannot be LOADED off macOS -- lispnik/objc opens
+# /usr/lib/libobjc.A.dylib as it initializes -- but src/ can be compiled against
+# a stand-in for the frameworks, and the listener half of it can then be RUN on
+# that stand-in.  So three questions get answered without a Mac: does it parse,
+# does it compile, and does the listener work.  The last one covers the thread,
+# the streams, the reader, the debugger and the interactive restarts; it covers
+# nothing with a window in it, which is macos.yml's job.
 #
 # It is here as its own workflow, and on ubuntu, because it answers in seconds
 # and should not be queued behind a macOS runner or a three-minute SBCL build.
@@ -16,7 +19,7 @@ on:
 
 jobs:
   check:
-    name: syntax and compile checks
+    name: parse, compile and run
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

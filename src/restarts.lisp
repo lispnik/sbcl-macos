@@ -145,12 +145,29 @@ debugger that established it."
             (hide-restarts-panel *listener*)))
     (error (condition) (note "dismissRestarts: ~a" condition))))
 
+(defun restart-asks-p (restart)
+  "True when invoking RESTART will stop and prompt for a value.
+
+That is what a restart's interactive function IS -- INVOKE-RESTART-INTERACTIVELY
+calls it, and SBCL's for USE-VALUE and STORE-VALUE print `Enter a form to be
+evaluated: ' and READ one back.  So clicking such a row does not finish the
+job, it starts a conversation in the transcript, and a trailing ellipsis is the
+Mac convention for exactly that: a control that opens a prompt rather than
+acting.
+
+There is no portable predicate for this, so this reads an SBCL internal behind
+IGNORE-ERRORS and answers NIL if it ever goes away.  Losing an ellipsis is the
+whole cost of being wrong here; that is why a guarded internal is acceptable for
+this and would not be for anything the behaviour depends on."
+  (and (ignore-errors (sb-kernel::restart-interactive-function restart)) t))
+
 (defun restart-button-title (index restart)
-  (format nil "~d:   [~a]   ~a"
+  (format nil "~d:   [~a]   ~a~@[~a~]"
           index
           (or (restart-name restart) "ANONYMOUS")
           (handler-case (princ-to-string restart)
-            (error () "(unprintable restart)"))))
+            (error () "(unprintable restart)"))
+          (and (restart-asks-p restart) " …")))
 
 (defun restart-titles (restarts)
   "The button labels, computed HERE -- on the listener thread.

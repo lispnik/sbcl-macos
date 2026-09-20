@@ -1,13 +1,19 @@
 ;;;; tools/stubs/stubs.lisp -- just enough of the world to COMPILE the listener
 ;;;; on a machine that has no Objective-C runtime.
 ;;;;
-;;;; This is not a mock and nothing here runs.  It exists so that SBCL's file
-;;;; compiler can be pointed at src/*.lisp off macOS and report what it always
-;;;; reports: undefined functions and variables, wrong argument counts, malformed
-;;;; lambda lists, macros that will not expand, a DEFCLASS with a bad slot.
-;;;; tools/syntax-check.lisp answers "does it parse"; this answers "does it
-;;;; compile", which is a great deal more, and neither answers "does it work" --
-;;;; only a Mac does that.
+;;;; Nothing here is a mock and, with one exception, nothing here runs.  It
+;;;; exists so that SBCL's file compiler can be pointed at src/*.lisp off macOS
+;;;; and report what it always reports: undefined functions and variables, wrong
+;;;; argument counts, malformed lambda lists, macros that will not expand, a
+;;;; DEFCLASS with a bad slot.  tools/syntax-check.lisp answers "does it parse";
+;;;; this answers "does it compile", which is a great deal more.
+;;;;
+;;;; The exception is BORDEAUX-THREADS, which delegates to SB-THREAD and really
+;;;; works.  That is what lets tools/headless-test.lisp run an actual listener
+;;;; on top of this file -- real threads, streams, reader, evaluator and
+;;;; debugger, with only Cocoa hollowed out -- and so answer a third question,
+;;;; "does the listener work", for everything that is not a window.  What it
+;;;; still cannot answer is whether the window works.  Only a Mac does that.
 ;;;;
 ;;;; The two defining macros mirror the real expanders' BINDING STRUCTURE, which
 ;;;; is the part the body depends on: SELF, the optional pointer variable, one
@@ -68,17 +74,30 @@
 
 (in-package #:bordeaux-threads)
 
-(defun make-lock (&optional name) (declare (ignore name)) (list :lock))
-(defmacro with-lock-held ((place) &body body) `(progn ,place ,@body))
-(defun make-condition-variable (&key name) (declare (ignore name)) (list :condition))
+;;; These are the one part of this file that is NOT a stub.  Everything else
+;;; here is a name with no behaviour, because the compiler only needs the name;
+;;; threads are different, because tools/headless-test.lisp drives a real
+;;; listener on this file and a listener whose thread never starts does
+;;; nothing.  SB-THREAD is portable to every platform the check runs on, and
+;;; the listener uses only this much of bordeaux-threads, so delegating costs
+;;; nothing and buys a second use for the file.
+(defun make-lock (&optional name)
+  (sb-thread:make-mutex :name (or name "lisp-listener lock")))
+(defmacro with-lock-held ((place) &body body)
+  `(sb-thread:with-mutex (,place) ,@body))
+(defun make-condition-variable (&key name)
+  (sb-thread:make-waitqueue :name (or name "lisp-listener condition")))
 (defun condition-wait (condition lock &key timeout)
-  (declare (ignore condition lock timeout)) t)
-(defun condition-notify (condition) (declare (ignore condition)) nil)
-(defun make-thread (function &key name) (declare (ignore function name)) (list :thread))
-(defun interrupt-thread (thread function) (declare (ignore thread function)) nil)
-(defun thread-alive-p (thread) (declare (ignore thread)) nil)
-(defun current-thread () (list :thread))
-(defun thread-name (thread) (declare (ignore thread)) "stub")
+  (sb-thread:condition-wait condition lock :timeout timeout))
+(defun condition-notify (condition)
+  (sb-thread:condition-notify condition))
+(defun make-thread (function &key name)
+  (sb-thread:make-thread function :name (or name "lisp-listener thread")))
+(defun interrupt-thread (thread function)
+  (sb-thread:interrupt-thread thread function))
+(defun thread-alive-p (thread) (sb-thread:thread-alive-p thread))
+(defun current-thread () sb-thread:*current-thread*)
+(defun thread-name (thread) (sb-thread:thread-name thread))
 
 ;;; ---------------------------------------------------------------------------
 

@@ -185,6 +185,22 @@ no new prompt appears and the user carries on typing."))
   (queue-clear (listener-input (stream-listener stream)))
   nil)
 
+(defmethod sb-gray:stream-line-column ((stream listener-input-stream))
+  "NIL: this stream does not track a column.
+
+A line-column method on an INPUT stream looks like dead code and is not.
+FRESH-LINE -- and therefore ~& -- on a TWO-WAY stream asks the INPUT half for
+its column, and *QUERY-IO* is a two-way stream of these two.  Without this,
+every ~& on *QUERY-IO* signalled NO-APPLICABLE-METHOD, which took out
+INVOKE-RESTART-INTERACTIVELY (so USE-VALUE and STORE-VALUE could not be used
+at all) and left Y-OR-N-P printing its question and never receiving the
+answer.
+
+Measured, on bare gray streams: FRESH-LINE signals, and so does a FORMAT
+whose control string opens with ~&, while WRITE-STRING, CLEAR-INPUT and
+FORCE-OUTPUT on the same two-way stream are all fine."
+  nil)
+
 ;;; Making them ---------------------------------------------------------------
 
 (defun make-listener ()

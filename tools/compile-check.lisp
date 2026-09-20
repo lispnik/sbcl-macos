@@ -43,7 +43,8 @@
 (defvar *style-warnings* 0)
 
 (handler-bind ((warning #'muffle-warning))
-  (load (merge-pathnames "tools/stubs/stubs.lisp" *root*)))
+  (load (merge-pathnames "tools/stubs/stubs.lisp" *root*)
+        :external-format :utf-8))
 
 (ensure-directories-exist *output*)
 
@@ -67,7 +68,13 @@
                     (muffle-warning condition))))
       (handler-case
           (multiple-value-bind (output warnings-p failure-p)
-              (compile-file source :output-file fasl :verbose nil :print nil)
+              ;; :EXTERNAL-FORMAT because src/ is no longer all ASCII -- one
+              ;; restart label carries an ellipsis -- and a bare COMPILE-FILE
+              ;; takes its encoding from the locale, which on a CI runner is
+              ;; whatever the image happens to set.  ASDF already defaults to
+              ;; UTF-8, so this only brings the check into line with the build.
+              (compile-file source :output-file fasl :verbose nil :print nil
+                                   :external-format :utf-8)
             (declare (ignore warnings-p))
             (when failure-p (incf *errors*))
             (when output (load output)))

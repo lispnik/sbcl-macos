@@ -5,10 +5,11 @@
 
 SBCL ?= sbcl
 
-.PHONY: check syntax-check compile-check run app clean
+.PHONY: check syntax-check compile-check test run app clean
 
-## Both off-macOS checks.  Neither can tell you the program works.
-check: syntax-check compile-check
+## All three off-macOS checks.  The first two cannot tell you the program
+## works; the third can, for everything that is not a window.
+check: syntax-check compile-check test
 
 ## Does it parse?  Reads every form with *READ-SUPPRESS*; needs nothing at all.
 syntax-check:
@@ -19,6 +20,13 @@ syntax-check:
 ## expand -- none of which a parse check can see.
 compile-check:
 	$(SBCL) --script tools/compile-check.lisp
+
+## Does it WORK?  Runs a real listener on the stubs -- real thread, real
+## streams, real reader, evaluator and debugger -- and drives it through a
+## session, the debugger, the interactive restarts, Y-OR-N-P and abort.  Only
+## Cocoa is hollow, so the window, the panel and the table are untested here.
+test:
+	$(SBCL) --script tools/headless-test.lisp
 
 ## A listener from a REPL, on thread 1.  Needs objc on the source registry.
 run:

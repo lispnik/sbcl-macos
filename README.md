@@ -169,6 +169,30 @@ into the middle of the line you are typing.
 bound to the window, so `(read-line)` in your own code reads from it, and a
 restart that needs a value asks for it there.
 
+### Restarts that ask
+
+Some restarts do not finish the job when you take them; they start a
+conversation. `use-value` and `store-value` carry an *interactive function*,
+and SBCL's prints `Enter a form to be evaluated:` and reads one back — on
+`*query-io*`, which is this window. So the panel marks them:
+
+```
+0:   [CONTINUE]   Retry using *MISSING*.
+1:   [USE-VALUE]   Use specified value. …
+2:   [STORE-VALUE]   Set specified value and use it. …
+3:   [ABORT]   Return to the listener's top level.
+```
+
+The ellipsis is the Mac convention for a control that opens a prompt rather
+than acting, and it is read from the restart itself, so it appears for anything
+a handler established with an `:interactive` clause, not for a fixed list.
+
+Clicking such a row works exactly as clicking any other: the panel hides, the
+number is typed into the window, and the interactive function's question and
+your answer go through the transcript. One mechanism, the same two doors.
+
+`y-or-n-p` and `yes-or-no-p` converse in the window for the same reason.
+
 ### The debugger
 
 An error prints the condition and a numbered list of restarts, and the prompt
@@ -179,27 +203,45 @@ works; ⌘. returns to the top.
 ## Development
 
 ```sh
-make check          # both of the checks below
+make check          # all three of the checks below, in about three seconds
 make syntax-check   # does it parse?
 make compile-check  # does it compile?
+make test           # does the listener work?
 ```
 
-Both run anywhere, Linux included, and that is the point: this system cannot be
-*loaded* off macOS, because lispnik/objc opens libobjc as soon as it
+All three run anywhere, Linux included, and that is the point: this system
+cannot be *loaded* off macOS, because lispnik/objc opens libobjc as soon as it
 initializes. `syntax-check` reads every form with `*read-suppress*` bound, so
 the reader checks structure without consulting a package. `compile-check`
 compiles `src/` against `tools/stubs/`, which supplies exactly the names `src/`
 uses, so the compiler reports undefined functions, wrong argument counts and
 macros that will not expand.
 
-Neither tells you the program works. Only a Mac does that — which is what
-`.github/workflows/macos.yml` is for: it builds SBCL `--with-sb-safepoint`,
-verifies the build really has them, runs the listener's self-test, builds
-`Lisp Listener.app` and runs the bundle's self-test, on both arm64 and Intel.
-`.github/workflows/check.yml` runs the two checks above on Linux in seconds.
+`make test` is the interesting one, because only *half* of this program is
+Cocoa. `tools/headless-test.lisp` starts a real listener on those same stubs —
+a real thread, the real gray streams, the real reader, evaluator, printer and
+debugger — and drives it through a session, an error, `use-value`,
+`store-value`, `y-or-n-p` and an abort, reading the transcript back and
+asserting on it. The seam that makes it possible is `schedule-flush`, which
+declines to do anything while there is no main thread to flush to, so the
+output simply piles up in the stream where the test can read it.
 
-If you change either checker, break a file on purpose and confirm it goes red —
-"no offenders" is also what an empty scan says.
+It earns its place. The `stream-line-column` method on the *input* stream
+exists because this harness found, in seconds, that `fresh-line` on a two-way
+stream asks the input half for its column — which had quietly broken every
+restart that prompts, and `y-or-n-p` with them, through three rounds of CI
+screenshots that all looked fine. Delete that method and three cases go red.
+
+What it does **not** cover is anything with a window in it: the view, the
+panel, the table, the screenshots are all stubs here. Only a Mac does that —
+which is what `.github/workflows/macos.yml` is for: it builds SBCL
+`--with-sb-safepoint`, verifies the build really has them, runs the listener's
+self-test, builds `Lisp Listener.app` and runs the bundle's self-test, on both
+arm64 and Intel. `.github/workflows/check.yml` runs the three above on Linux in
+seconds.
+
+If you change any of the three, break something on purpose and confirm it goes
+red — "no offenders" is also what an empty scan says.
 
 ## Known limits
 
