@@ -215,6 +215,29 @@ so instead of quietly aborting and looking fine."
       (list (cons "debugger" transcript)
             (cons "restarts" (and panel clicked))))))
 
+(defun check-cancel (listener)
+  "Raise an error again and press Cancel: it must return to the top level.
+
+Not a screenshot, a behaviour.  Cancel used to merely close the panel, which
+looks identical in a picture and leaves the listener stranded at its [1]
+prompt with the way out just taken off the screen."
+  (cond
+    ((not (and (submit-and-wait listener "(car 7)" "Restarts:")
+               (wait-for (lambda () (restarts-panel-visible-p listener)) :timeout 5)))
+     (note "cancel check: the panel never appeared")
+     nil)
+    ((not (click-cancel listener))
+     (note "cancel check: no Cancel button to press")
+     (abort-evaluation listener)
+     nil)
+    ((wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 10)
+     (note "cancel returned to the top level")
+     t)
+    (t
+     (note "cancel check: Cancel did NOT return to the top level")
+     (abort-evaluation listener)
+     nil)))
+
 (defun shoot-interrupt (listener directory)
   "A form that never returns, and the prompt got back with Interrupt.
 
@@ -270,7 +293,10 @@ Exit code 0 only when every shot was written."
                     (list (cons "session" (shoot-session listener directory))
                           (cons "interrupt" (shoot-interrupt listener directory)))
                     ;; Two shots, and a click: see SHOOT-DEBUGGER.
-                    (shoot-debugger listener directory))))
+                    (shoot-debugger listener directory)
+                    ;; No shot, but the same panel: Cancel has to abort, not
+                    ;; just close.
+                    (list (cons "cancel" (check-cancel listener))))))
       (let ((missing (mapcar #'car (remove-if #'cdr results))))
         (note "screenshots: ~d of ~d written~@[; missing: ~{~a~^, ~}~]"
               (count-if #'cdr results) (length results) missing)

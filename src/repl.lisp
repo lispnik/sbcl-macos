@@ -72,6 +72,14 @@ SETF is sequential, so oldest first is not a stylistic choice."
 
 ;;; The debugger --------------------------------------------------------------
 
+(defvar *toplevel-restart* nil
+  "The ABORT restart that returns to the listener's top level.
+
+Captured as the restart OBJECT, not as a number.  The panel's Cancel has to
+take this exact restart, and its position in COMPUTE-RESTARTS' list is whatever
+the handlers in between make it -- assuming index 0 would be right today and
+wrong the first time anyone's own handler established one nearer.")
+
 (defparameter *backtrace-enabled* t
   "Whether entering the debugger also shows a backtrace.")
 
@@ -192,7 +200,8 @@ transfers control through a restart or aborts to the top level."
       ;; The panel is an ADDITION: the numbered list above is still printed and
       ;; the prompt below still takes a number.  Clicking a button types that
       ;; number, so both doors lead to the same READ-LINE.
-      (offer-restarts listener condition restarts backtrace))
+      (offer-restarts listener condition restarts backtrace
+                      (position *toplevel-restart* restarts)))
     (drain-pending-whitespace *standard-input*)
     (setf (listener-debug-level listener) (1+ saved))
     ;; No ABORT restart is established here on purpose.  Aborting means "back to
@@ -331,7 +340,10 @@ Errors go to the debugger hook, not to here."
           ;; otherwise an interrupt leaves no trace at all.
           (multiple-value-bind (ignored aborted)
               (with-simple-restart (abort "Return to the listener's top level.")
-                (setf live (listener-rep listener)))
+                ;; FIND-RESTART inside the form finds the innermost ABORT,
+                ;; which is the one just established.
+                (let ((*toplevel-restart* (find-restart 'abort)))
+                  (setf live (listener-rep listener))))
             (declare (ignore ignored))
             (when aborted (note-abort listener)))
           (unless live (return)))))))

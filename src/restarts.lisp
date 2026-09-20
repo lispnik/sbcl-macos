@@ -66,7 +66,11 @@ this.")
 ;;; The controller -------------------------------------------------------------
 
 (objc:define-objc-class restarts-controller ()
-  ((titles :initform '() :accessor controller-titles
+  ((cancel-index :initform nil :accessor controller-cancel-index
+                 :documentation "Which row Cancel takes: the index, in the rows
+being shown, of the restart that returns to the listener's top level.  NIL when
+it is not among them, in which case Cancel can only close the panel.")
+   (titles :initform '() :accessor controller-titles
            :documentation "The rows the table is showing.
 
 Held on the controller because a data source is asked for its rows whenever
@@ -126,7 +130,19 @@ debugger that established it."
 (objc:define-objc-method ("dismissRestarts:" :void)
     ((self restarts-controller) (sender objc:objc-object-pointer))
   (declare (ignorable sender))
-  (handler-case (hide-restarts-panel *listener*)
+  ;; Cancel RETURNS TO THE TOP LEVEL, through the restart -- it does not merely
+  ;; close the panel.  Closing it alone would leave the listener sitting at its
+  ;; [1] prompt with the way out just taken off the screen, which is the
+  ;; opposite of what a Cancel button promises.
+  ;;
+  ;; Through the restart, and not through an interrupt: the abort restart is
+  ;; the listener's own, the reader is waiting for exactly this answer, and
+  ;; taking it is the same act as typing its number.
+  (handler-case
+      (let ((index (controller-cancel-index self)))
+        (if index
+            (choose-restart index)
+            (hide-restarts-panel *listener*)))
     (error (condition) (note "dismissRestarts: ~a" condition))))
 
 (defun restart-button-title (index restart)
@@ -303,7 +319,7 @@ Computed on the listener thread, for the same reason the titles are."
                 (concatenate 'string (subseq squeezed 0 87) "...")
                 squeezed))))
 
-(defun build-restarts-panel (listener heading backtrace titles)
+(defun build-restarts-panel (listener heading backtrace titles cancel-index)
   "A floating panel: the condition, the frames, the restarts as a list, and
 the two push buttons that act on the selection.  Main thread only.
 
@@ -331,7 +347,8 @@ RESTART-TITLES for why they cannot be printed here."
          (controller (getf (listener-retained listener) :restarts-controller))
          (target (objc:objc-object-pointer controller))
          (content (objc:invoke panel "contentView")))
-    (setf (controller-titles controller) titles)
+    (setf (controller-titles controller) titles
+          (controller-cancel-index controller) cancel-index)
     (objc:invoke panel "setReleasedWhenClosed:" nil)
     (objc:invoke panel "setTitle:" "Restarts")
     (objc:invoke panel "setFloatingPanel:" t)
@@ -380,10 +397,11 @@ RESTART-TITLES for why they cannot be printed here."
 
 ;;; Showing and hiding ----------------------------------------------------------
 
-(defun show-restarts-panel (listener heading backtrace titles)
-  "Put TITLES on screen as buttons under HEADING and the frames.  Thread 1."
+(defun show-restarts-panel (listener heading backtrace titles cancel-index)
+  "Put TITLES on screen under HEADING and the frames.  Thread 1."
   (hide-restarts-panel listener)
-  (let ((panel (build-restarts-panel listener heading backtrace titles)))
+  (let ((panel (build-restarts-panel listener heading backtrace titles
+                                     cancel-index)))
     (setf (listener-restarts-panel listener) panel)
     (position-restarts-panel listener panel)
     ;; -orderFront: rather than -makeKeyAndOrderFront:.  The listener window
@@ -404,7 +422,9 @@ RESTART-TITLES for why they cannot be printed here."
       ;; The controller outlives every panel, so its rows have to go with this
       ;; one: a stale list would be answered to the next table that asks.
       (let ((controller (getf (listener-retained listener) :restarts-controller)))
-        (when controller (setf (controller-titles controller) '())))))
+        (when controller
+          (setf (controller-titles controller) '()
+                (controller-cancel-index controller) nil)))))
   t)
 
 (defun click-restart (&optional (index 0) (listener *listener*))
@@ -421,6 +441,60 @@ Returns whether there was a table and a button to use."
       (select-restart-row table index)
       (objc:invoke button "performClick:" nil)
       t)))
+
+(defun cancel-to-top-level (&optional (listener *listener*))
+  "Take the restart that returns to the listener's top level, if one is on
+offer.  Thread 1.  Returns whether it did."
+  (let* ((controller (and listener
+                          (getf (listener-retained listener) :restarts-controller)))
+         (index (and controller (controller-cancel-index controller))))
+    (when index
+      (choose-restart index)
+      t)))
+
+;;; Escape, from the listener window itself.
+;;;
+;;; These are methods on the TEXT VIEW but they live here, with the rest of the
+;;; restart behaviour, and because view.lisp loads first a definition there
+;;; would be a forward reference to everything above.
+;;;
+;;; Both selectors, and the second is the one that does the work.  Escape is
+;;; NSResponder's -cancelOperation: in most controls, which is why that one is
+;;; here at all -- but inside an NSTextView the standard key bindings send
+;;; Escape to -complete:, the word-completion action.  Overriding only the
+;;; conventional one would have looked right and done nothing.
+;;;
+;;; Neither changes anything unless a restarts panel is up: with no panel they
+;;; both go to super, so completion still behaves as it always did.
+
+(define-listener-method ("cancelOperation:" :void)
+    ((sender objc:objc-object-pointer))
+  (unless (cancel-to-top-level)
+    (objc:invoke (objc:current-super) "cancelOperation:" sender)))
+
+(define-listener-method ("complete:" :void)
+    ((sender objc:objc-object-pointer))
+  (unless (cancel-to-top-level)
+    (objc:invoke (objc:current-super) "complete:" sender)))
+
+(defun click-cancel (&optional (listener *listener*))
+  "Press Cancel, exactly as a person would.  Thread 1.
+
+Found among the panel's subviews by title, because unlike Invoke it is not
+worth a slot on the listener just so a test can reach it."
+  (let ((panel (and listener (listener-restarts-panel listener))))
+    (when (and panel (cffi:pointerp panel) (not (cffi:null-pointer-p panel)))
+      (let* ((subviews (objc:invoke (objc:invoke panel "contentView") "subviews"))
+             (count (objc:invoke subviews "count"))
+             (button-class (objc:coerce-to-objc-class "NSButton")))
+        (loop for i from 0 below count
+              for view = (objc:invoke subviews "objectAtIndex:" i)
+              when (and (objc:invoke-bool view "isKindOfClass:" button-class)
+                        (string= "Cancel"
+                                 (objc:ns-string-to-string
+                                  (objc:invoke view "title"))))
+                do (objc:invoke view "performClick:" nil)
+                   (return t))))))
 
 (defun restarts-table-row-count (&optional (listener *listener*))
   "How many rows the table believes it has.  Thread 1.
@@ -439,7 +513,7 @@ never found answers zero."
 
 ;;; What the debugger calls ------------------------------------------------------
 
-(defun offer-restarts (listener condition restarts &optional backtrace)
+(defun offer-restarts (listener condition restarts &optional backtrace cancel-index)
   "Show the restarts, from the listener thread.  Never blocks it.
 
 :WAIT NIL, so the listener thread goes straight on to its prompt: the panel and
@@ -451,7 +525,7 @@ shut the other one."
      (let ((heading (condition-summary condition))
            (titles (restart-titles restarts)))
        (on-main-thread ()
-         (show-restarts-panel listener heading backtrace titles)))))
+         (show-restarts-panel listener heading backtrace titles cancel-index)))))
   restarts)
 
 (defun withdraw-restarts (listener)

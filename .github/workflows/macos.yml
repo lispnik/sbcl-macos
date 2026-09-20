@@ -272,6 +272,12 @@ jobs:
           # AppKit never found -numberOfRowsInTableView:, which a picture of an
           # empty list would not distinguish from a panel that simply had no
           # restarts to show.
+          # Cancel must take the restart, not merely close the panel.  The two
+          # are indistinguishable in a picture: one returns you to the top
+          # level, the other leaves you at the [1] prompt with the way out
+          # taken off the screen.
+          grep -q "cancel returned to the top level" screenshots.log \
+            || { echo "::error::Cancel did not return to the top level" >&2; exit 1; }
           grep -qE "restarts panel: [1-9][0-9]* rows" screenshots.log \
             || { echo "::error::the restarts table reported no rows" >&2
                  grep -E "restarts panel:" screenshots.log >&2 || true; exit 1; }

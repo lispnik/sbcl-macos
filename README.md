@@ -26,7 +26,10 @@ it at that level.
 A panel of the same restarts opens alongside, after the LispWorks notifier:
 the restarts themselves, in the order `compute-restarts` gives them, listed in
 an `NSTableView` — so whatever a handler established shows up, rather than a
-fixed set of buttons. Select one and press Invoke, or double-click it.
+fixed set of buttons. Select one and press Invoke, or double-click it. Cancel
+— and Escape, from the listener window itself — takes the restart that returns
+you to the top level, rather than just closing the panel and leaving you at the
+`[1]` prompt.
 
 ![The restarts panel](doc/screenshots/restarts.png)
 
