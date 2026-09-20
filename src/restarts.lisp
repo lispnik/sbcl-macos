@@ -73,6 +73,40 @@ was before this file existed.")
           (handler-case (princ-to-string restart)
             (error () "(unprintable restart)"))))
 
+(defun restart-titles (restarts)
+  "The button labels, computed HERE -- on the listener thread.
+
+A restart's report may read the CURRENT thread rather than the one it was
+established on.  SBCL's per-thread abort restart is exactly that: it reports as
+`abort thread (#<THREAD ...>)' using SB-THREAD:*CURRENT-THREAD* at print time.
+Printed from thread 1 while laying out the panel, it named the main thread and
+was quietly wrong about which thread it would abort -- while the transcript,
+printed on the listener thread, had it right all along.
+
+Measured: a restart established on one thread and printed from another reports
+the printing thread's name.  So the strings are made here and the panel is
+handed text it cannot get wrong."
+  (loop for restart in restarts
+        for index from 0
+        collect (restart-button-title index restart)))
+
+(defun squeeze-whitespace (text)
+  "TEXT with each run of whitespace reduced to one space, and trimmed.
+
+A condition report is laid out over several indented lines; flattened into a
+one-line heading, that indentation would survive as ragged gaps."
+  (let ((out (make-string-output-stream))
+        (pending nil)
+        (started nil))
+    (loop for character across text
+          do (if (member character '(#\Space #\Tab #\Newline #\Return))
+                 (when started (setf pending t))
+                 (progn
+                   (when pending (write-char #\Space out) (setf pending nil))
+                   (write-char character out)
+                   (setf started t))))
+    (get-output-stream-string out)))
+
 (defun make-restart-button (title index target width y)
   "One restart, as a button that knows its own index through -tag."
   (let ((button (objc:invoke (objc:invoke "NSButton" "alloc") "initWithFrame:"
@@ -81,6 +115,9 @@ was before this file existed.")
                                      *restart-button-height*))))
     (objc:invoke button "setTitle:" title)
     (objc:invoke button "setBezelStyle:" 1)
+    ;; NSButton centres its title, so a short restart sat in the middle of the
+    ;; row while a long one filled it and the list read as ragged.
+    (objc:invoke button "setAlignment:" 0)
     (objc:invoke button "setTag:" index)
     (objc:invoke button "setTarget:" target)
     (objc:invoke button "setAction:" (objc:coerce-to-selector "restartChosen:"))
@@ -102,18 +139,22 @@ was before this file existed.")
 
 (defun condition-summary (condition)
   "One line for the panel's heading.  The transcript has the full report; this
-only has to say which condition the buttons belong to."
-  (let* ((text (substitute #\Space #\Newline (report-condition condition)))
-         (squeezed (string-trim " " text)))
+only has to say which condition the buttons belong to.
+
+Computed on the listener thread, for the same reason the titles are."
+  (let ((squeezed (squeeze-whitespace (report-condition condition))))
     (format nil "~a: ~a"
             (type-of condition)
             (if (> (length squeezed) 90)
                 (concatenate 'string (subseq squeezed 0 87) "...")
                 squeezed))))
 
-(defun build-restarts-panel (listener condition restarts)
-  "A floating panel with one button per restart.  Main thread only."
-  (let* ((count (length restarts))
+(defun build-restarts-panel (listener heading titles)
+  "A floating panel with one button per restart.  Main thread only.
+
+Takes finished strings rather than the restarts themselves: see
+RESTART-TITLES for why they cannot be printed here."
+  (let* ((count (length titles))
          (width *restarts-panel-width*)
          (row (+ *restart-button-height* *restart-button-gap*))
          (height (+ (* 2 *restarts-panel-margin*)
@@ -136,16 +177,15 @@ only has to say which condition the buttons belong to."
     ;; An NSView's origin is bottom left, so the first restart -- the one
     ;; COMPUTE-RESTARTS considers nearest -- is laid out highest.
     (let ((label (make-condition-label
-                  (condition-summary condition) width
+                  heading width
                   (- height *restarts-panel-margin* *restarts-panel-label-height*))))
       (objc:invoke content "addSubview:" label)
       (objc:release label))
-    (loop for restart in restarts
+    (loop for title in titles
           for index from 0
           for y = (- height *restarts-panel-margin* *restarts-panel-label-height*
                      (* (1+ index) row))
-          do (let ((button (make-restart-button (restart-button-title index restart)
-                                                index target width y)))
+          do (let ((button (make-restart-button title index target width y)))
                (objc:invoke content "addSubview:" button)
                ;; -addSubview: retains; the +1 from -alloc is ours to drop.
                (objc:release button)))
@@ -163,10 +203,10 @@ only has to say which condition the buttons belong to."
 
 ;;; Showing and hiding ----------------------------------------------------------
 
-(defun show-restarts-panel (listener condition restarts)
-  "Put RESTARTS on screen as buttons.  Main thread only."
+(defun show-restarts-panel (listener heading titles)
+  "Put TITLES on screen as buttons under HEADING.  Main thread only."
   (hide-restarts-panel listener)
-  (let ((panel (build-restarts-panel listener condition restarts)))
+  (let ((panel (build-restarts-panel listener heading titles)))
     (setf (listener-restarts-panel listener) panel)
     (position-restarts-panel listener panel)
     ;; -orderFront: rather than -makeKeyAndOrderFront:.  The listener window
@@ -217,7 +257,10 @@ the prompt are two doors into the same room, and waiting for the panel would
 shut the other one."
   (when (and *restarts-panel-enabled* *main-thread-target*)
     (ignore-errors
-     (on-main-thread () (show-restarts-panel listener condition restarts))))
+     ;; Printed HERE, on the listener thread, and handed over as text.
+     (let ((heading (condition-summary condition))
+           (titles (restart-titles restarts)))
+       (on-main-thread () (show-restarts-panel listener heading titles)))))
   restarts)
 
 (defun withdraw-restarts (listener)
