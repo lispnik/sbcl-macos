@@ -459,12 +459,24 @@ Returns whether there was a table and a button to use."
       (objc:invoke button "performClick:" nil)
       t)))
 
+(defun toplevel-restart-row (&optional (listener *listener*))
+  "The row of the restart that returns to the listener's top level, or NIL.
+Thread 1.
+
+The panel already worked this out when it was built -- CANCEL-INDEX -- and
+this is the same number under a name that says what it is for.  Anything that
+wants to take that restart asks for its row rather than assuming one, because
+the assumption that would be natural, zero, is wrong for the commonest error
+there is: on an unbound variable SBCL puts CONTINUE, USE-VALUE and STORE-VALUE
+in front of it, and row 0 is `Retry using *FOO*' -- which retries, and retries."
+  (let ((controller (and listener
+                         (getf (listener-retained listener) :restarts-controller))))
+    (and controller (controller-cancel-index controller))))
+
 (defun cancel-to-top-level (&optional (listener *listener*))
   "Take the restart that returns to the listener's top level, if one is on
 offer.  Thread 1.  Returns whether it did."
-  (let* ((controller (and listener
-                          (getf (listener-retained listener) :restarts-controller)))
-         (index (and controller (controller-cancel-index controller))))
+  (let ((index (toplevel-restart-row listener)))
     (when index
       (choose-restart index)
       t)))

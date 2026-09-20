@@ -263,11 +263,20 @@ jobs:
             echo "$shot.png: $(stat -f%z "$LISP_LISTENER_SCREENSHOT/$shot.png") bytes"
           done
           # The restarts panel is exercised, not just photographed: the script
-          # presses restart 0 through -performClick: and the listener has to
-          # come back to its top level.  A panel that draws and does nothing
-          # would otherwise pass every check above.
-          grep -q "clicking restart 0 returned to the top level" screenshots.log \
+          # presses the top-level restart's row through -performClick: and the
+          # listener has to come back to its top level.  A panel that draws and
+          # does nothing would otherwise pass every check above.
+          grep -q "clicking that row returned to the top level" screenshots.log \
             || { echo "::error::the restarts panel did not invoke its restart" >&2; exit 1; }
+          # And that row is NOT row 0.  The condition is an unbound variable, so
+          # SBCL puts CONTINUE, USE-VALUE and STORE-VALUE in front of the
+          # listener's own ABORT.  Clicking a hardcoded row 0 here would invoke
+          # `Retry using *NO-SUCH-VARIABLE*' and spin -- and would look, in
+          # every picture and every other check, exactly like this passing.
+          # Asserted rather than photographed for that reason.
+          grep -qE "the top-level restart is row [1-9]" screenshots.log \
+            || { echo "::error::the top-level restart was row 0; this no longer tests the case it was written for" >&2
+                 grep -E "restarts panel:" screenshots.log >&2 || true; exit 1; }
           # The table's data source has to have been consulted.  Zero rows means
           # AppKit never found -numberOfRowsInTableView:, which a picture of an
           # empty list would not distinguish from a panel that simply had no

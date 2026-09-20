@@ -175,15 +175,21 @@ Returns an alist of the two shots, because this scene makes two: the
 transcript and the panel are separate windows, and there is no screen capture
 available here to get both in one frame.
 
-(CAR 7) rather than (ERROR \"...\"): a TYPE-ERROR from the system carries a
-real report and a real restart list, which is what the pictures are for.
+An UNBOUND VARIABLE rather than (ERROR \"...\") or (CAR 7).  A system condition
+carries a real report and a real restart list, which is what the pictures are
+for -- and this one carries the most interesting list there is: SBCL puts
+CONTINUE, USE-VALUE and STORE-VALUE in front of the listener's own ABORT, two
+of them with interactive functions.  So the picture shows what a type error
+cannot: several restarts rather than two, and the ellipsis that marks the ones
+that will stop and ask for a value.
 
 The restart is then taken BY CLICKING IT.  That is the point of doing it this
 way round -- the panel gets exercised end to end, through the button's target
 and tag and the number it queues, rather than merely photographed.  If the
 click does not get us back to the top level, the panel is broken and this says
 so instead of quietly aborting and looking fine."
-  (let* ((entered (and (submit-and-wait listener "(car 7)" "Restarts:")
+  (let* ((entered (and (submit-and-wait listener "(symbol-value '*no-such-variable*)"
+                                         "Restarts:")
                        (wait-for (lambda () (in-debugger-p listener)) :timeout 5)))
          (transcript (and entered
                           (capture (listener-window listener) directory "debugger.png")))
@@ -201,12 +207,21 @@ so instead of quietly aborting and looking fine."
     ;; does.
     (when panel-up
       (note "restarts panel: ~a rows" (restarts-table-row-count listener)))
-    (let ((clicked (and panel-up
-                        (click-restart 0 listener)
-                        (wait-for (lambda () (waiting-at-top-level-p listener))
-                                  :timeout 10))))
+    ;; The row to click is ASKED FOR, never assumed.  With this condition the
+    ;; listener's own ABORT is row 3, behind CONTINUE, USE-VALUE and
+    ;; STORE-VALUE -- so a hardcoded 0 would click `Retry using
+    ;; *NO-SUCH-VARIABLE*', which retries, and retries.  Said out loud because
+    ;; a picture cannot show which row was clicked, and CI asserts it is not 0.
+    (let* ((row (and panel-up (toplevel-restart-row listener)))
+           (clicked (and row
+                         (progn (note "restarts panel: the top-level restart is row ~d" row)
+                                (click-restart row listener))
+                         (wait-for (lambda () (waiting-at-top-level-p listener))
+                                   :timeout 10))))
+      (when (and panel-up (null row))
+        (note "restarts panel: no row returns to the top level"))
       (if clicked
-          (note "restarts panel: clicking restart 0 returned to the top level")
+          (note "restarts panel: clicking that row returned to the top level")
           (progn
             (note "restarts panel: the click did NOT return to the top level")
             ;; Leave the listener usable for whatever runs next regardless.
@@ -220,9 +235,14 @@ so instead of quietly aborting and looking fine."
 
 Not a screenshot, a behaviour.  Cancel used to merely close the panel, which
 looks identical in a picture and leaves the listener stranded at its [1]
-prompt with the way out just taken off the screen."
+prompt with the way out just taken off the screen.
+
+The same unbound variable as above, and for the harder reason: its top-level
+restart is row 3.  Cancel finds it by object, so this passes; had it taken
+whatever sat at row 0 it would here invoke CONTINUE and spin."
   (cond
-    ((not (and (submit-and-wait listener "(car 7)" "Restarts:")
+    ((not (and (submit-and-wait listener "(symbol-value '*no-such-variable*)"
+                                "Restarts:")
                (wait-for (lambda () (restarts-panel-visible-p listener)) :timeout 5)))
      (note "cancel check: the panel never appeared")
      nil)
