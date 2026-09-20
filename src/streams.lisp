@@ -117,10 +117,22 @@ already pending and do nothing."
 (defparameter *transcript-line-length* 100
   "How wide the pretty printer may assume the transcript is.
 
-Without STREAM-LINE-LENGTH the printer has to guess, and it guesses narrow: a
-TYPE-ERROR's report came out as five ragged lines -- `The value', `7', `is not
-of type', `LIST' -- which reads like a bug in the listener rather than a
-sentence.  The window is about 108 monospaced columns at its default size.")
+Without STREAM-LINE-LENGTH the printer has no width to work from and guesses,
+so a long list or a wide structure wraps at the wrong place or not at all.  The
+window is about 108 monospaced columns at its default size.
+
+It does NOT change how a condition report is laid out, which was the reason
+this was added and was the wrong reason.  SBCL's TYPE-ERROR report comes out as
+
+    The value
+      7
+    is not of type
+      LIST
+
+at every margin, on a bare SBCL, because its formatter uses mandatory newlines
+rather than conditional ones.  That is what SBCL's own REPL shows too, so the
+transcript is being faithful rather than broken.  Measured, after assuming
+otherwise and being wrong.")
 
 (defmethod sb-gray:stream-line-length ((stream listener-output-stream))
   *transcript-line-length*)

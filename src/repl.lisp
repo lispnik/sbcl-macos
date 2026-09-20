@@ -239,9 +239,26 @@ Errors go to the debugger hook, not to here."
         ;; true and the loop goes round again; only a clean NIL from
         ;; LISTENER-REP, which means end of input, stops it.
         (let ((live t))
-          (with-simple-restart (abort "Return to the listener's top level.")
-            (setf live (listener-rep listener)))
+          ;; WITH-SIMPLE-RESTART answers (VALUES NIL T) when its restart was
+          ;; taken, which is how the loop can tell "the form finished" from
+          ;; "the form was abandoned" -- and it is worth telling, because
+          ;; otherwise an interrupt leaves no trace at all.
+          (multiple-value-bind (ignored aborted)
+              (with-simple-restart (abort "Return to the listener's top level.")
+                (setf live (listener-rep listener)))
+            (declare (ignore ignored))
+            (when aborted (note-abort listener)))
           (unless live (return)))))))
+
+(defun note-abort (listener)
+  "Say that the last form was abandoned.
+
+Without this, interrupting a computation shows the form and then a fresh
+prompt, with nothing at all to distinguish it from a form that simply returned
+no values."
+  (let ((stream (listener-output listener)))
+    (with-output-kind (stream :note)
+      (format stream "~&; Aborted.~%"))))
 
 (defun start-listener-thread (listener)
   "Start the listener.  Called LAST, once there is a view to talk to.
