@@ -3,3 +3,7 @@ build/
 *.dx32fsl
 *.dx64fsl
 .DS_Store
+
+# ocicl-vendored dependency sources -- restore with `ocicl install' (make deps).
+# The lockfile, ocicl.csv, IS committed; what it pins is not.
+/ocicl/

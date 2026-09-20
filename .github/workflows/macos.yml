@@ -53,8 +53,14 @@ env:
   SBCL_TAG: sbcl-2.6.7
   # Non-recursive entries for the three checkouts, recursive for the dependency
   # directory ocicl fills in, and a trailing colon to inherit the rest.
+  #
+  # THE CHECKOUTS COME FIRST, AND THAT IS THE POINT.  ocicl.csv pins objc and
+  # asdf-macos-app too, so ocicl/ holds a published copy of both -- but this
+  # repository lives beside them and exists partly to catch a break in objc's
+  # master before it is published, so the checkout has to win.  ASDF takes the
+  # first match, so ordering is the whole mechanism.
   CL_SOURCE_REGISTRY: >-
-    ${{ github.workspace }}/sbcl-macos/:${{ github.workspace }}/objc/:${{ github.workspace }}/asdf-macos-app/:${{ github.workspace }}/objc/ocicl//:
+    ${{ github.workspace }}/sbcl-macos/:${{ github.workspace }}/objc/:${{ github.workspace }}/asdf-macos-app/:${{ github.workspace }}/sbcl-macos/ocicl//:
 
 jobs:
   test:
@@ -144,29 +150,28 @@ jobs:
           ( cd "$HOME/ocicl-src" && sbcl --non-interactive --load setup.lisp )
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Restore dependencies into the objc checkout
-        # In objc, not here.  Its ocicl.csv is where every Lisp dependency this
-        # project has is listed -- cffi, alexandria, closer-mop,
-        # bordeaux-threads, trivial-features, float-features -- and this
-        # repository has no ocicl.csv of its own.  Restoring in the wrong
-        # directory installs nothing and fails two steps later as "Component
-        # not found", pointing at the library.
+      - name: Restore dependencies
+        # HERE, from this repository's own ocicl.csv.  This used to restore in
+        # the objc checkout and borrow ITS lockfile, because this repository had
+        # none; it has one now, and it pins the whole closure -- objc and
+        # asdf-macos-app included -- so the dependencies of this project are
+        # declared by this project.
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           ocicl setup
-          cd objc
+          cd sbcl-macos
           # ocicl exits 0 when a download fails and ghcr.io fails often enough
           # to matter, so: several attempts, and a failure here rather than a
           # mystery later.
           for attempt in 1 2 3 4 5; do
-            ocicl install 2>&1 | tee ocicl-install.log
-            if ! grep -q "failed to install" ocicl-install.log; then
+            ocicl install 2>&1 | tee "$RUNNER_TEMP/ocicl-install.log"
+            if ! grep -q "failed to install" "$RUNNER_TEMP/ocicl-install.log"; then
               break
             fi
             echo "::warning::ocicl install attempt $attempt did not get every package"
             sleep 30
           done
-          if grep -q "failed to install" ocicl-install.log; then
+          if grep -q "failed to install" "$RUNNER_TEMP/ocicl-install.log"; then
             echo "::error::ocicl could not install every dependency after 5 attempts" >&2
             exit 1
           fi
@@ -234,6 +239,33 @@ jobs:
           cat "$MACOS_APP_LOG" || echo "(the bundle wrote no log at all)"
           grep -q "selftest: (+ 1 2) => 3" "$MACOS_APP_LOG" \
             || { echo "::error::the bundled listener did not evaluate (+ 1 2)" >&2; exit 1; }
+
+      - name: The ocicl-only path, with no sibling checkouts
+        # The README now tells a newcomer that `ocicl setup && ocicl install' is
+        # the whole of it -- no objc checkout, no asdf-macos-app checkout.  Every
+        # other step in this job has both on the source registry, so not one of
+        # them can tell whether that claim is true.  This one can: a clean clone
+        # of this repository alone, its own ocicl/, and a source registry with
+        # NO trailing colon, so nothing else is inherited and a missing pin
+        # fails here rather than being quietly satisfied from somewhere else.
+        #
+        # Loading only, not `asdf:make'.  Building the bundle is the previous
+        # step's job and doing it twice buys nothing; what is in question here is
+        # whether the lockfile names everything the system needs.
+        run: |
+          set -eux
+          rm -rf "$RUNNER_TEMP/fresh"
+          git clone --quiet sbcl-macos "$RUNNER_TEMP/fresh"
+          cd "$RUNNER_TEMP/fresh"
+          export PATH="$HOME/.local/bin:$PATH"
+          ocicl install
+          echo "restored from the lockfile alone:" && ls ocicl
+          env CL_SOURCE_REGISTRY="$RUNNER_TEMP/fresh/:$RUNNER_TEMP/fresh/ocicl//" \
+            "$SBCL_SAFEPOINT" --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-system "lisp-listener")' \
+              --eval '(asdf:find-system "lisp-listener-app")' \
+              --eval '(format t "~&ocicl-only: loaded ~a and found the app system~%" (asdf:component-name (asdf:find-system "objc")))'
 
       - name: Take the screenshots
         # arm64 only: the pictures are for the README, and two of the same thing

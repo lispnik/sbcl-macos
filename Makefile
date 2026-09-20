@@ -5,7 +5,18 @@
 
 SBCL ?= sbcl
 
-.PHONY: check syntax-check compile-check test run app clean
+.PHONY: deps check syntax-check compile-check test run app clean
+
+## Restore the dependencies this project pins, into ./ocicl/.
+##
+## ocicl.csv is a LOCKFILE: it names each dependency by its registry digest,
+## not by a version that can be re-cut, so this restores the same sources on
+## every machine and every run.  It covers objc and asdf-macos-app as well, so
+## a fresh clone needs no sibling checkouts -- see the README.
+##
+## Needs the ocicl tool itself: https://github.com/ocicl/ocicl
+deps:
+	ocicl install
 
 ## All three off-macOS checks.  The first two cannot tell you the program
 ## works; the third can, for everything that is not a window.

@@ -68,9 +68,41 @@ is involved: nothing is photographed off the screen.
 
 - macOS on arm64 or Intel.
 - **An SBCL built `--with-sb-safepoint`.** See below.
-- [`objc`](https://github.com/lispnik/objc) and, for the bundle,
-  [`asdf-macos-app`](https://github.com/lispnik/asdf-macos-app), on the source
-  registry.
+- The Lisp dependencies, which [ocicl](https://github.com/ocicl/ocicl) will
+  fetch for you.
+
+## Dependencies, with ocicl
+
+```sh
+ocicl setup        # once per machine
+make deps          # or: ocicl install
+```
+
+That is the whole of it: `ocicl install` reads `ocicl.csv` and restores
+everything into `./ocicl/`, which `ocicl setup` has already put on ASDF's
+source registry. **No sibling checkouts are needed** —
+[`objc`](https://github.com/lispnik/objc) and
+[`asdf-macos-app`](https://github.com/lispnik/asdf-macos-app) are themselves
+published to ocicl, so a fresh clone plus the two commands above is enough to
+`(asdf:load-system "lisp-listener")` and to `make app`.
+
+`ocicl.csv` is a **lockfile**, and it is committed. Every row names its package
+by digest:
+
+```
+objc, ghcr.io/ocicl/objc@sha256:3a99872f…, objc-20260918-a217b78/objc.asd
+```
+
+A digest is the content, not a label that can be re-cut, so `ocicl install`
+restores the same 13 packages — 26 system definitions between them — on every
+machine and in every CI run. The restored
+sources are *not* committed — `/ocicl/` is gitignored — because the lockfile is
+what pins them.
+
+If you would rather work against a checkout of `objc` — which is what this
+repository's own CI does, so that a break in objc's `master` shows up here
+before it is published — put it on `CL_SOURCE_REGISTRY` ahead of `./ocicl/` and
+it will shadow the pinned copy.
 
 ## Why a safepoint build
 
@@ -206,11 +238,15 @@ works; ⌘. returns to the top.
 ## Development
 
 ```sh
+make deps           # restore the pinned dependencies into ./ocicl/
 make check          # all three of the checks below, in about three seconds
 make syntax-check   # does it parse?
 make compile-check  # does it compile?
 make test           # does the listener work?
 ```
+
+The three checks need no dependencies at all — they run against
+`tools/stubs/`, so `make check` works in a fresh clone before `make deps`.
 
 All three run anywhere, Linux included, and that is the point: this system
 cannot be *loaded* off macOS, because lispnik/objc opens libobjc as soon as it
