@@ -243,7 +243,13 @@ jobs:
         run: |
           set -eux
           set -o pipefail
-          export LISP_LISTENER_SCREENSHOT="$PWD/doc/screenshots"
+          # An EMPTY directory outside the tree, deliberately.  The repository
+          # carries committed copies of these three files in doc/screenshots/,
+          # so writing there would leave the checks below passing on last
+          # week's pictures if the application produced none today -- the test
+          # would go quietly vacuous at the exact moment it mattered.
+          export LISP_LISTENER_SCREENSHOT="$RUNNER_TEMP/screenshots"
+          rm -rf "$LISP_LISTENER_SCREENSHOT"
           perl -e 'alarm shift; exec @ARGV' 240 \
             "$SBCL_SAFEPOINT" --non-interactive \
               --eval '(require :asdf)' \
@@ -252,9 +258,16 @@ jobs:
           # RUN-SCREENSHOTS exits non-zero if a shot is missing, but an exit
           # code cannot say the window was blank, so the sizes are checked too.
           for shot in session debugger interrupt; do
-            test -s "doc/screenshots/$shot.png" \
-              || { echo "::error::doc/screenshots/$shot.png is missing or empty" >&2; exit 1; }
-            echo "$shot.png: $(stat -f%z "doc/screenshots/$shot.png") bytes"
+            test -s "$LISP_LISTENER_SCREENSHOT/$shot.png" \
+              || { echo "::error::$shot.png is missing or empty" >&2; exit 1; }
+            echo "$shot.png: $(stat -f%z "$LISP_LISTENER_SCREENSHOT/$shot.png") bytes"
+          done
+          # The committed copies should match what the application produces
+          # now.  A difference is not a failure -- it usually means the
+          # screenshots are due to be refreshed -- but it should be visible.
+          for shot in session debugger interrupt; do
+            cmp -s "$LISP_LISTENER_SCREENSHOT/$shot.png" "doc/screenshots/$shot.png" \
+              || echo "::warning::doc/screenshots/$shot.png differs from this run; refresh it"
           done
 
       - name: Keep the pictures
@@ -265,5 +278,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
-          path: sbcl-macos/doc/screenshots/*.png
+          path: ${{ runner.temp }}/screenshots/*.png
           if-no-files-found: error
