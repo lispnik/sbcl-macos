@@ -1,0 +1,33 @@
+# The checks that need no Mac.
+#
+# This system cannot be LOADED off macOS at all -- lispnik/objc opens
+# /usr/lib/libobjc.A.dylib as it initializes -- so these two are everything
+# that can be said about the code without a runner: does it parse, and does it
+# compile against a stand-in for the frameworks.  Neither says it works.
+#
+# It is here as its own workflow, and on ubuntu, because it answers in seconds
+# and should not be queued behind a macOS runner or a three-minute SBCL build.
+
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: syntax and compile checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install SBCL
+        run: sudo apt-get update && sudo apt-get install -y sbcl
+
+      - name: Report the environment
+        run: sbcl --version
+
+      - name: Check
+        run: make check

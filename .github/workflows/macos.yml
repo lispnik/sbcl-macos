@@ -1,0 +1,266 @@
+# The real one: build an SBCL with safepoints, run the listener on it, build the
+# bundle, and photograph the window.
+#
+# WHY SAFEPOINTS.  On macOS a garbage collection that catches two or more
+# libdispatch worker threads inside Lisp kills the process outright -- Darwin
+# refuses to pthread_kill a workqueue thread, and stop_the_world calls lose().
+# Nothing here uses GCD directly, but AppKit reaches libdispatch on its own, so
+# this is the build the application asks for and therefore the build CI must
+# test it on.  See lispnik/objc doc/sbcl-libdispatch-safepoint.md.
+#
+# THE RUNNERS HAVE A WINDOW SERVER, and that is what makes the screenshot job
+# possible.  It is easy to believe otherwise -- lispnik/objc's own workflow used
+# to say so and retracted it, and its window-server-p docstring still does.  The
+# evidence is a full objc run reporting `Skip: 0' with its windowed suite among
+# the checks, including a test that animates a SceneKit view in a window.
+#
+# THE INTEL LABEL.  macos-13, the old free Intel image, has been RETIRED, and a
+# job labelled with it is never assigned a runner: it queues indefinitely rather
+# than failing, so the workflow never reports at all.  Intel is macos-26-intel.
+# This is the most expensive mistake available in this file, because it does not
+# look like a mistake -- it looks like a slow queue.
+#
+# The Intel leg is not box-ticking.  A structure result over sixteen bytes goes
+# through objc_msgSend_stret on x86-64, a function that does not exist on arm64,
+# where the same result comes back through x8; and every NSRange and NSRect this
+# application passes -- the input marker, the selection, the dirty rectangle --
+# crosses that boundary.
+#
+# STEP ORDER IS LOAD BEARING.  SBCL is built BEFORE ocicl is set up: an SBCL
+# contrib build calls UPGRADE-ASDF, so a source registry with any ASDF or UIOP
+# source on it fails the build at sb-manual with the core already built and
+# working.
+
+name: macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # The two repositories disagree on their default branch name, and assuming
+  # they agreed cost utc-status-app a CI run: actions/checkout does not say "no
+  # such branch", it retries the fetch three times and fails with `'git' failed
+  # with exit code 1'.
+  OBJC_REPO: lispnik/objc
+  OBJC_REF: master
+  MACOS_APP_REPO: lispnik/asdf-macos-app
+  MACOS_APP_REF: main
+  # A pinned release tag, never a branch: a branch name in a cache key stops
+  # tracking what it names the moment the branch moves, and the cache then hands
+  # back a binary built from something else.
+  SBCL_TAG: sbcl-2.6.7
+  # Non-recursive entries for the three checkouts, recursive for the dependency
+  # directory ocicl fills in, and a trailing colon to inherit the rest.
+  CL_SOURCE_REGISTRY: >-
+    ${{ github.workspace }}/sbcl-macos/:${{ github.workspace }}/objc/:${{ github.workspace }}/asdf-macos-app/:${{ github.workspace }}/objc/ocicl//:
+
+jobs:
+  test:
+    name: sbcl --with-sb-safepoint · ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    # A cap so a wedged runner fails visibly.  objc had an Intel leg sit for 52
+    # minutes and end with "the hosted runner lost communication with the
+    # server" -- no logs, no failing check, nothing to tell a hung test from a
+    # sick machine.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-26-intel
+            arch: x86-64
+
+    steps:
+      - name: Check out sbcl-macos
+        uses: actions/checkout@v5
+        with:
+          path: sbcl-macos
+
+      - name: Check out objc beside it
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.OBJC_REPO }}
+          ref: ${{ env.OBJC_REF }}
+          path: objc
+
+      - name: Check out asdf-macos-app beside it
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.MACOS_APP_REPO }}
+          ref: ${{ env.MACOS_APP_REF }}
+          path: asdf-macos-app
+
+      - name: Settle on where the safepoint SBCL lives
+        # Outside the workspace on purpose: SBCL's own sources must never land
+        # on the source registry.  Not under ~/.local either, which is where
+        # ocicl puts its binary.
+        run: echo "SAFEPOINT_PREFIX=$HOME/sbcl-safepoint" >> "$GITHUB_ENV"
+
+      - name: Install a host SBCL
+        # Only to compile the real one; nothing below runs on it except the
+        # off-macOS checks and ocicl's own installer.
+        run: brew install sbcl
+
+      - name: Cache the safepoint SBCL
+        id: sbcl-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/sbcl-safepoint
+          key: sbcl-safepoint-${{ runner.os }}-${{ runner.arch }}-${{ env.SBCL_TAG }}
+
+      - name: Build SBCL with safepoints
+        if: steps.sbcl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          git clone --depth 1 --branch "$SBCL_TAG" \
+            https://github.com/sbcl/sbcl.git "$RUNNER_TEMP/sbcl-src"
+          cd "$RUNNER_TEMP/sbcl-src"
+          ./make.sh --with-sb-safepoint --prefix="$SAFEPOINT_PREFIX"
+          INSTALL_ROOT="$SAFEPOINT_PREFIX" sh install.sh
+
+      - name: Verify the build really has safepoints
+        # Not a diagnostic.  Every step after this one passes on a stock build
+        # too, so without this a run that quietly came out without safepoints
+        # would be green having tested nothing it was written to test.
+        #
+        # SB-EXT:EXIT and --no-userinit --no-sysinit, not UIOP:QUIT: nothing has
+        # loaded ASDF at this point, and the difference is invisible on a
+        # developer's machine where ~/.sbclrc loads it.
+        run: |
+          echo "SBCL_SAFEPOINT=$SAFEPOINT_PREFIX/bin/sbcl" >> "$GITHUB_ENV"
+          "$SAFEPOINT_PREFIX/bin/sbcl" --non-interactive --no-userinit --no-sysinit \
+            --eval '(format t "~&version: ~a~%safepoint: ~a~%" (lisp-implementation-version) (and (member :sb-safepoint *features*) t))' \
+            --eval '(sb-ext:exit :code (if (member :sb-safepoint *features*) 0 1))'
+
+      - name: Install and configure ocicl
+        run: |
+          # The ocicl tool is cloned outside every checkout, so it cannot
+          # collide with the gitignored ocicl/ dependency directory in one.
+          git clone --depth 1 https://github.com/ocicl/ocicl.git "$HOME/ocicl-src"
+          ( cd "$HOME/ocicl-src" && sbcl --non-interactive --load setup.lisp )
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies into the objc checkout
+        # In objc, not here.  Its ocicl.csv is where every Lisp dependency this
+        # project has is listed -- cffi, alexandria, closer-mop,
+        # bordeaux-threads, trivial-features, float-features -- and this
+        # repository has no ocicl.csv of its own.  Restoring in the wrong
+        # directory installs nothing and fails two steps later as "Component
+        # not found", pointing at the library.
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          ocicl setup
+          cd objc
+          # ocicl exits 0 when a download fails and ghcr.io fails often enough
+          # to matter, so: several attempts, and a failure here rather than a
+          # mystery later.
+          for attempt in 1 2 3 4 5; do
+            ocicl install 2>&1 | tee ocicl-install.log
+            if ! grep -q "failed to install" ocicl-install.log; then
+              break
+            fi
+            echo "::warning::ocicl install attempt $attempt did not get every package"
+            sleep 30
+          done
+          if grep -q "failed to install" ocicl-install.log; then
+            echo "::error::ocicl could not install every dependency after 5 attempts" >&2
+            exit 1
+          fi
+          echo "restored:" && ls ocicl
+
+      - name: Report the environment
+        working-directory: sbcl-macos
+        run: |
+          sw_vers
+          "$SBCL_SAFEPOINT" --version
+          "$SBCL_SAFEPOINT" --non-interactive \
+            --eval '(require :asdf)' \
+            --eval '(asdf:load-system "lisp-listener")' \
+            --eval '(format t "~&machine: ~a~%safepoint: ~a~%window server: ~a~%" (machine-type) (lisp-listener:safepoint-build-p) (objc.runloop:window-server-p))'
+
+      - name: The off-macOS checks, here too
+        # Seconds, and they catch a fasl-cache or source-registry problem before
+        # anything more expensive has to.
+        working-directory: sbcl-macos
+        run: make check SBCL="$SBCL_SAFEPOINT"
+
+      - name: Run the listener's self-test
+        # The application, its window and its listener thread, driven headlessly
+        # and asserted on.  macOS ships no timeout(1); perl's alarm is the
+        # portable stand-in, and without it a wedged window would burn the
+        # whole timeout-minutes instead of failing in two.
+        working-directory: sbcl-macos
+        run: |
+          set -eux
+          set -o pipefail
+          export LISP_LISTENER_SELFTEST="$PWD/selftest.png"
+          perl -e 'alarm shift; exec @ARGV' 180 \
+            "$SBCL_SAFEPOINT" --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-system "lisp-listener")' \
+              --eval '(lisp-listener:main)' 2>&1 | tee selftest.log
+          grep -q "selftest: (+ 1 2) => 3" selftest.log \
+            || { echo "::error::the listener did not evaluate (+ 1 2)" >&2; exit 1; }
+          test -s "$LISP_LISTENER_SELFTEST" \
+            || { echo "::error::the self-test wrote no image" >&2; exit 1; }
+
+      - name: Build the .app bundle and run it
+        # The bundle is the deliverable, and dumping an image is where a
+        # Lisp-defined Objective-C class stops surviving: objc re-queues every
+        # class and method across SAVE-LISP-AND-DIE and rebuilds them on
+        # restart, and this is the step that says whether that happened.
+        working-directory: sbcl-macos
+        run: |
+          set -eux
+          "$SBCL_SAFEPOINT" --non-interactive \
+            --eval '(require :asdf)' \
+            --eval '(asdf:make "lisp-listener-app")'
+          APP="build/Lisp Listener.app"
+          test -d "$APP"
+          plutil -lint "$APP/Contents/Info.plist"
+          plutil -p "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP"
+          # env -u SBCL_HOME: a bundle launched from a shell that exports it --
+          # Homebrew's sbcl wrapper does -- loads the wrong core and drops into
+          # a plain REPL, which looks like the application doing nothing.
+          export MACOS_APP_LOG="$PWD/bundle.log"
+          export LISP_LISTENER_SELFTEST="$PWD/bundle-selftest.png"
+          perl -e 'alarm shift; exec @ARGV' 180 \
+            env -u SBCL_HOME "$APP/Contents/MacOS/lisp-listener" || true
+          cat "$MACOS_APP_LOG"
+          grep -q "selftest: (+ 1 2) => 3" "$MACOS_APP_LOG" \
+            || { echo "::error::the bundled listener did not evaluate (+ 1 2)" >&2; exit 1; }
+
+      - name: Take the screenshots
+        # arm64 only: the pictures are for the README, and two of the same thing
+        # would be two of the same thing.
+        if: matrix.arch == 'arm64'
+        working-directory: sbcl-macos
+        run: |
+          set -eux
+          set -o pipefail
+          export LISP_LISTENER_SCREENSHOT="$PWD/doc/screenshots"
+          perl -e 'alarm shift; exec @ARGV' 240 \
+            "$SBCL_SAFEPOINT" --non-interactive \
+              --eval '(require :asdf)' \
+              --eval '(asdf:load-system "lisp-listener")' \
+              --eval '(lisp-listener:main)' 2>&1 | tee screenshots.log
+          # RUN-SCREENSHOTS exits non-zero if a shot is missing, but an exit
+          # code cannot say the window was blank, so the sizes are checked too.
+          for shot in session debugger interrupt; do
+            test -s "doc/screenshots/$shot.png" \
+              || { echo "::error::doc/screenshots/$shot.png is missing or empty" >&2; exit 1; }
+            echo "$shot.png: $(stat -f%z "doc/screenshots/$shot.png") bytes"
+          done
+
+      - name: Keep the pictures
+        if: matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: sbcl-macos/doc/screenshots/*.png
+          if-no-files-found: error

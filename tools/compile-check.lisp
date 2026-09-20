@@ -35,7 +35,8 @@
 
 ;;; The order is lisp-listener.asd's, which is :SERIAL.
 (defparameter *files*
-  '("package" "main-thread" "queue" "listener" "view" "streams" "repl" "window" "app"))
+  '("package" "main-thread" "queue" "listener" "view" "streams" "repl" "window"
+    "screenshot" "app"))
 
 (defvar *errors* 0)
 (defvar *warnings* 0)

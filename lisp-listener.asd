@@ -34,4 +34,5 @@ an SBCL built --with-sb-safepoint; see the README for why."
                  (:file "streams")
                  (:file "repl")
                  (:file "window")
+                 (:file "screenshot")
                  (:file "app")))))

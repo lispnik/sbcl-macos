@@ -46,6 +46,16 @@ very same call.  Leaving it to SHARED-APPLICATION is too late.")
       (note "self-test: ~a" condition)
       (objc:invoke (objc.runloop:shared-application) "terminate:" nil))))
 
+(objc:define-objc-method ("listenerScreenshots:" :void)
+    ((self listener-controller) (timer objc:objc-object-pointer))
+  (declare (ignorable timer))
+  ;; RUN-SCREENSHOTS does not return -- it exits the process with a status that
+  ;; says whether every shot was written.  The handler is for the way there.
+  (handler-case (run-screenshots)
+    (error (condition)
+      (note "screenshots: ~a" condition)
+      (finish-and-exit 4))))
+
 ;;; The application delegate --------------------------------------------------
 
 (objc:define-objc-class listener-application-delegate ()
@@ -155,28 +165,23 @@ hopes is a test that goes red on a loaded machine and teaches nobody anything."
          (search +self-test-expected+ text :start2 (+ echo (length +self-test-form+)))
          t)))
 
-(defun write-window-png (listener path)
-  "Write the window's content view to PATH as a PNG.  Main thread only."
-  (handler-case
-      (let* ((view (objc:invoke (listener-window listener) "contentView"))
-             (bounds (objc:invoke view "bounds"))
-             (representation (objc:invoke view "bitmapImageRepForCachingDisplayInRect:"
-                                          bounds)))
-        (objc:invoke view "cacheDisplayInRect:toBitmapImageRep:" bounds representation)
-        (objc:invoke (objc:invoke representation "representationUsingType:properties:"
-                                  +png-file-type+
-                                  (objc:invoke "NSDictionary" "dictionary"))
-                     "writeToFile:atomically:" path t))
-    (error (condition) (note "snapshot: ~a" condition)))
-  path)
+(defun schedule-after (listener seconds selector)
+  "Send SELECTOR to the controller SECONDS after the event loop starts.
 
-(defun schedule-self-test (listener seconds)
+A timer rather than a call here: -[NSApplication run] has not been entered yet,
+so nothing driven from this point could pump anything."
   (objc:invoke "NSTimer"
                "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"
                (coerce seconds 'double-float)
                (objc:objc-object-pointer (getf (listener-retained listener) :controller))
-               (objc:coerce-to-selector "listenerSelfTest:")
+               (objc:coerce-to-selector selector)
                nil nil))
+
+(defun schedule-self-test (listener seconds)
+  (schedule-after listener seconds "listenerSelfTest:"))
+
+(defun schedule-screenshots (listener seconds)
+  (schedule-after listener seconds "listenerScreenshots:"))
 
 ;;; Entry points --------------------------------------------------------------
 
@@ -189,10 +194,24 @@ Does not return: -[NSApplication run] does not."
   ;; in the transcript machinery has nowhere else to be reported, and "nothing
   ;; happened and nothing was logged" is the worst outcome available.
   (setf *log* *error-output*)
+  (require-window-server)
   (let ((listener (build-listener)))
-    (when (uiop:getenv "LISP_LISTENER_SELFTEST")
-      (schedule-self-test listener 1.5))
+    (cond
+      ((uiop:getenv "LISP_LISTENER_SCREENSHOT") (schedule-screenshots listener 1.0))
+      ((uiop:getenv "LISP_LISTENER_SELFTEST") (schedule-self-test listener 1.5)))
     (objc.runloop:run-cocoa-application)))
+
+(defun require-window-server ()
+  "Leave, with a reason, when there is nothing to draw on.
+
+[NSScreen mainScreen] is nil in a process with no display.  Without this check
+that becomes a window nobody can see and an event loop nobody can end, which
+presents as a hang -- the worst way for this to fail, and the likeliest place
+to meet it is an automated one."
+  (unless (objc.runloop:window-server-p)
+    (note "there is no window server, so there is nowhere to put a listener.")
+    (ignore-errors (finish-output *log*))
+    (sb-ext:exit :code 2 :abort t)))
 
 (defun run-listener (&key (title "Lisp Listener"))
   "Start a listener from a plain SBCL REPL, on thread 1, and return when the
