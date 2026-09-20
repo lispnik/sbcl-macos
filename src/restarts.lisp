@@ -49,8 +49,19 @@ was before this file existed.")
 (defparameter *push-button-width* 96d0)
 (defparameter *panel-gap* 10d0)
 (defparameter *backtrace-pane-height* 150d0
-  "How tall the backtrace pane is.  It scrolls, so this is a window onto the
-frames rather than a limit on them.")
+  "The MOST the backtrace pane grows to.  It scrolls, so this is a window onto
+the frames rather than a limit on them -- but a fixed height left three frames
+sitting in a mostly empty box, so BACKTRACE-PANE-HEIGHT fits the content up to
+this.")
+
+(defparameter *backtrace-line-height* 14d0)
+
+(defun backtrace-pane-height (lines)
+  (if lines
+      (min *backtrace-pane-height*
+           (max (* 3 *backtrace-line-height*)
+                (+ 8d0 (* (length lines) *backtrace-line-height*))))
+      0d0))
 
 ;;; The controller -------------------------------------------------------------
 
@@ -179,6 +190,11 @@ caller's to release, and NSTableView will not."
     (objc:invoke field "setSelectable:" nil)
     (objc:invoke field "setFont:"
                  (objc:invoke "NSFont" "monospacedSystemFontOfSize:weight:" 11d0 0d0))
+    ;; NSLineBreakByTruncatingTail.  A restart's report can be far wider than
+    ;; the column -- the per-thread abort one names the whole thread object --
+    ;; and without this the text simply stops mid-word, which reads as a
+    ;; rendering fault rather than as "there is more here".
+    (objc:invoke (objc:invoke field "cell") "setLineBreakMode:" 4)
     (objc:autorelease field)))
 
 (defun select-restart-row (table row)
@@ -298,7 +314,7 @@ RESTART-TITLES for why they cannot be printed here."
          (table-height (min *restarts-table-max-height*
                             (max (* 2 *restart-row-height*)
                                  (+ 4d0 (* count *restart-row-height*)))))
-         (pane-height (if backtrace *backtrace-pane-height* 0d0))
+         (pane-height (backtrace-pane-height backtrace))
          (pane-gap (if backtrace *panel-gap* 0d0))
          (height (+ (* 2 *restarts-panel-margin*)
                     *restarts-panel-label-height*
