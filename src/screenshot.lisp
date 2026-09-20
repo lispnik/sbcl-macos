@@ -195,6 +195,12 @@ so instead of quietly aborting and looking fine."
                               "restarts.png"))))
     (unless panel-up
       (note "screenshots: the restarts panel never appeared"))
+    ;; Said out loud so CI can assert it.  A table whose delegate AppKit never
+    ;; found renders as the right number of BLANK rows and fails nothing; a
+    ;; table whose data source was never consulted answers zero here, which
+    ;; does.
+    (when panel-up
+      (note "restarts panel: ~a rows" (restarts-table-row-count listener)))
     (let ((clicked (and panel-up
                         (click-restart 0 listener)
                         (wait-for (lambda () (waiting-at-top-level-p listener))

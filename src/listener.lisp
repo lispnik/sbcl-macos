@@ -29,8 +29,11 @@ an IMP is handed self and its arguments and nothing else.")
   ;; Cocoa side, so if nothing here held them they would be collected while
   ;; still installed.  A plist, because there are three of them.
   (retained '())
-  ;; The restarts panel, while a debugger level has one up.  Thread 1 only.
+  ;; The restarts panel and the two controls inside it that anything outside
+  ;; needs to reach, while a debugger level has one up.  Thread 1 only.
   restarts-panel
+  restarts-table
+  restarts-invoke
   ;; Set from MAIN when the application is a bundle, so that quitting can go
   ;; through -[NSApplication terminate:] rather than SB-EXT:EXIT.
   (bundled nil))

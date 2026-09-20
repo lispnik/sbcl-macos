@@ -24,9 +24,9 @@ it at that level.
 ![The debugger](doc/screenshots/debugger.png)
 
 A panel of the same restarts opens alongside, after the LispWorks notifier:
-the restarts themselves, in the order `compute-restarts` gives them, one
-button each — so whatever a handler established shows up, rather than a fixed
-set of buttons.
+the restarts themselves, in the order `compute-restarts` gives them, listed in
+an `NSTableView` — so whatever a handler established shows up, rather than a
+fixed set of buttons. Select one and press Invoke, or double-click it.
 
 ![The restarts panel](doc/screenshots/restarts.png)
 

@@ -268,6 +268,13 @@ jobs:
           # would otherwise pass every check above.
           grep -q "clicking restart 0 returned to the top level" screenshots.log \
             || { echo "::error::the restarts panel did not invoke its restart" >&2; exit 1; }
+          # The table's data source has to have been consulted.  Zero rows means
+          # AppKit never found -numberOfRowsInTableView:, which a picture of an
+          # empty list would not distinguish from a panel that simply had no
+          # restarts to show.
+          grep -qE "restarts panel: [1-9][0-9]* rows" screenshots.log \
+            || { echo "::error::the restarts table reported no rows" >&2
+                 grep -E "restarts panel:" screenshots.log >&2 || true; exit 1; }
           # The committed copies should match what the application produces
           # now.  A difference is not a failure -- it usually means the
           # screenshots are due to be refreshed -- but it should be visible.
