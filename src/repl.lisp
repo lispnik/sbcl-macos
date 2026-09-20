@@ -226,6 +226,18 @@ Errors go to the debugger hook, not to here."
           (*debug-io* io)
           (*terminal-io* io)
           (*package* (find-package "COMMON-LISP-USER"))
+          ;; BOTH hooks, and that is not belt and braces.  SBCL's
+          ;; INVOKE-DEBUGGER sets *DEBUGGER-HOOK* to NIL before calling it, so
+          ;; that a hook which itself errors cannot loop -- which means a
+          ;; nested error, raised while the debugger is already up, finds
+          ;; *DEBUGGER-HOOK* empty.  SB-EXT:*INVOKE-DEBUGGER-HOOK* is not
+          ;; nulled, so it is what catches the nested one.  Bind only the
+          ;; standard hook and debugger levels below the first fall through to
+          ;; SBCL's own debugger, on *DEBUG-IO*, which is this window.
+          ;;
+          ;; Measured rather than assumed: with both bound, an error raised
+          ;; from inside the hook came back reporting `*debugger-hook* is now
+          ;; NIL' and was handled anyway.
           (*debugger-hook* debugger)
           (sb-ext:*invoke-debugger-hook* debugger))
       (print-banner listener)
