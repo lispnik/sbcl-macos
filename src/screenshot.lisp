@@ -94,23 +94,47 @@ the history, the hand-off -- instead of stepping around it."
 
 ;;; Capturing -----------------------------------------------------------------
 
-(defun write-window-png (listener path)
-  "Write the window's content view to PATH as a PNG.  Main thread only.
+(defun window-capture-view (window)
+  "The view that draws the whole window, title bar and all.
 
--cacheDisplayInRect:toBitmapImageRep: draws the view into an offscreen bitmap,
-which needs no permission.  Capturing the window WITH its title bar would mean
-CGWindowListCreateImage and screen-recording permission, and on a CI runner
-that is a TCC prompt nobody can click -- which is a hang, not a failure."
+An NSWindow's content view has a SUPERVIEW -- the frame view, which draws the
+title bar, the traffic lights and the border.  Asking it to draw gives the
+window as it actually looks, and it does so through the ordinary offscreen
+display path, which needs no permission at all.
+
+That last part is the whole reason for going this way.  The obvious way to
+photograph a window with its chrome is CGWindowListCreateImage, which
+photographs the composited window -- and since Catalina that wants Screen
+Recording permission.  On a CI runner there is nobody to grant it: the request
+is a TCC prompt that no one can click, which is a hang rather than a failure,
+and the picture would come back empty even if it did not hang.
+
+Returns the content view instead if there is no superview, so a window built
+some other way still photographs something rather than nothing."
+  (let* ((content (objc:invoke window "contentView"))
+         (frame-view (objc:invoke content "superview")))
+    (if (and (cffi:pointerp frame-view) (not (cffi:null-pointer-p frame-view)))
+        (values frame-view t)
+        (values content nil))))
+
+(defun write-window-png (listener path)
+  "Write the window, chrome included, to PATH as a PNG.  Main thread only."
   (handler-case
-      (let* ((view (objc:invoke (listener-window listener) "contentView"))
-             (bounds (objc:invoke view "bounds"))
-             (representation (objc:invoke view "bitmapImageRepForCachingDisplayInRect:"
-                                          bounds)))
-        (objc:invoke view "cacheDisplayInRect:toBitmapImageRep:" bounds representation)
-        (objc:invoke (objc:invoke representation "representationUsingType:properties:"
-                                  +png-file-type+
-                                  (objc:invoke "NSDictionary" "dictionary"))
-                     "writeToFile:atomically:" path t))
+      (multiple-value-bind (view chrome-p)
+          (window-capture-view (listener-window listener))
+        (let* ((bounds (objc:invoke view "bounds"))
+               (representation
+                 (objc:invoke view "bitmapImageRepForCachingDisplayInRect:" bounds)))
+          (objc:invoke view "cacheDisplayInRect:toBitmapImageRep:" bounds representation)
+          (objc:invoke (objc:invoke representation "representationUsingType:properties:"
+                                    +png-file-type+
+                                    (objc:invoke "NSDictionary" "dictionary"))
+                       "writeToFile:atomically:" path t)
+          ;; Said out loud, because "did the title bar come out" is exactly the
+          ;; question a size in the log can answer and an exit code cannot.
+          (note "captured ~a (~,0fx~,0f)"
+                (if chrome-p "the whole window" "the content view only")
+                (aref bounds 2) (aref bounds 3))))
     (error (condition) (note "snapshot: ~a" condition)))
   path)
 

@@ -32,6 +32,10 @@ These three are not staged. `src/screenshot.lisp` drives a real listener and
 photographs it, and `.github/workflows/macos.yml` runs it on every push — so
 they are always a picture of the current code, taken on a GitHub macOS runner.
 
+The capture asks the window's frame view to draw itself into a bitmap, which
+is why the title bar is in the picture and why no Screen Recording permission
+is involved: nothing is photographed off the screen.
+
 ## Requirements
 
 - macOS on arm64 or Intel.
