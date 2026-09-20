@@ -23,6 +23,22 @@ it at that level.
 
 ![The debugger](doc/screenshots/debugger.png)
 
+A panel of the same restarts opens alongside, after the LispWorks notifier:
+the restarts themselves, in the order `compute-restarts` gives them, one
+button each — so whatever a handler established shows up, rather than a fixed
+set of buttons.
+
+![The restarts panel](doc/screenshots/restarts.png)
+
+It is an **addition**. The transcript still prints the list, the prompt still
+takes a number, and the panel is not modal — the listener window keeps the
+keyboard, so you can type the number with the panel open. Clicking a button
+*types that number for you*: a restart has to be invoked on the listener
+thread, inside the dynamic extent of the debugger that established it, and
+that thread is already sitting in `read-line` waiting for exactly this answer.
+So there is one mechanism with two doors, not two mechanisms. Set
+`lisp-listener:*restarts-panel-enabled*` to `nil` for the transcript alone.
+
 Evaluation is on another thread, so a form that never returns leaves the window
 responsive, and Interrupt (⌘.) gets the prompt back.
 

@@ -257,15 +257,21 @@ jobs:
               --eval '(lisp-listener:main)' 2>&1 | tee screenshots.log
           # RUN-SCREENSHOTS exits non-zero if a shot is missing, but an exit
           # code cannot say the window was blank, so the sizes are checked too.
-          for shot in session debugger interrupt; do
+          for shot in session debugger interrupt restarts; do
             test -s "$LISP_LISTENER_SCREENSHOT/$shot.png" \
               || { echo "::error::$shot.png is missing or empty" >&2; exit 1; }
             echo "$shot.png: $(stat -f%z "$LISP_LISTENER_SCREENSHOT/$shot.png") bytes"
           done
+          # The restarts panel is exercised, not just photographed: the script
+          # presses restart 0 through -performClick: and the listener has to
+          # come back to its top level.  A panel that draws and does nothing
+          # would otherwise pass every check above.
+          grep -q "clicking restart 0 returned to the top level" screenshots.log \
+            || { echo "::error::the restarts panel did not invoke its restart" >&2; exit 1; }
           # The committed copies should match what the application produces
           # now.  A difference is not a failure -- it usually means the
           # screenshots are due to be refreshed -- but it should be visible.
-          for shot in session debugger interrupt; do
+          for shot in session debugger interrupt restarts; do
             cmp -s "$LISP_LISTENER_SCREENSHOT/$shot.png" "doc/screenshots/$shot.png" \
               || echo "::warning::doc/screenshots/$shot.png differs from this run; refresh it"
           done

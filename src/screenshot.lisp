@@ -117,11 +117,11 @@ some other way still photographs something rather than nothing."
         (values frame-view t)
         (values content nil))))
 
-(defun write-window-png (listener path)
-  "Write the window, chrome included, to PATH as a PNG.  Main thread only."
+(defun write-window-png (window path)
+  "Write WINDOW, chrome included, to PATH as a PNG.  Main thread only."
   (handler-case
       (multiple-value-bind (view chrome-p)
-          (window-capture-view (listener-window listener))
+          (window-capture-view window)
         (let* ((bounds (objc:invoke view "bounds"))
                (representation
                  (objc:invoke view "bitmapImageRepForCachingDisplayInRect:" bounds)))
@@ -145,13 +145,13 @@ some other way still photographs something rather than nothing."
         (and stream (plusp (file-length stream))))
     (error () nil)))
 
-(defun capture (listener directory name)
-  "Let the window settle, then write NAME into DIRECTORY.  Returns truth on
+(defun capture (window directory name)
+  "Let things settle, then write WINDOW to NAME in DIRECTORY.  Returns truth on
 success -- an empty or missing file is a failure, because an exit code cannot
 say the window was blank."
   (pump-for 0.6d0)
   (let ((path (merge-pathnames name (uiop:ensure-directory-pathname directory))))
-    (write-window-png listener (uiop:native-namestring path))
+    (write-window-png window (uiop:native-namestring path))
     (let ((ok (file-not-empty-p path)))
       (note "screenshot ~a: ~a" name (if ok "written" "MISSING OR EMPTY"))
       ok)))
@@ -166,21 +166,48 @@ say the window was blank."
                         "(dotimes (i 3) (format t \"tick ~d~%\" i))"
                         "tick 2")
        (submit-and-wait listener "(loop for i from 1 to 6 collect (* i i))" "36")
-       (capture listener directory "session.png")))
+       (capture (listener-window listener) directory "session.png")))
 
 (defun shoot-debugger (listener directory)
-  "An error, its restarts, and the nested prompt.
+  "An error, its restarts in the transcript, and the restarts panel.
+
+Returns an alist of the two shots, because this scene makes two: the
+transcript and the panel are separate windows, and there is no screen capture
+available here to get both in one frame.
 
 (CAR 7) rather than (ERROR \"...\"): a TYPE-ERROR from the system carries a
-real report and a real restart list, which is what the picture is for."
-  (let ((ok (and (submit-and-wait listener "(car 7)" "Restarts:")
-                 (wait-for (lambda () (in-debugger-p listener)) :timeout 5)
-                 (capture listener directory "debugger.png"))))
-    ;; Back to the top level whatever happened, or the next shot starts inside
-    ;; a debugger level.
-    (abort-evaluation listener)
-    (wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 10)
-    ok))
+real report and a real restart list, which is what the pictures are for.
+
+The restart is then taken BY CLICKING IT.  That is the point of doing it this
+way round -- the panel gets exercised end to end, through the button's target
+and tag and the number it queues, rather than merely photographed.  If the
+click does not get us back to the top level, the panel is broken and this says
+so instead of quietly aborting and looking fine."
+  (let* ((entered (and (submit-and-wait listener "(car 7)" "Restarts:")
+                       (wait-for (lambda () (in-debugger-p listener)) :timeout 5)))
+         (transcript (and entered
+                          (capture (listener-window listener) directory "debugger.png")))
+         (panel-up (and entered
+                        (wait-for (lambda () (restarts-panel-visible-p listener))
+                                  :timeout 5)))
+         (panel (and panel-up
+                     (capture (listener-restarts-panel listener) directory
+                              "restarts.png"))))
+    (unless panel-up
+      (note "screenshots: the restarts panel never appeared"))
+    (let ((clicked (and panel-up
+                        (click-restart 0 listener)
+                        (wait-for (lambda () (waiting-at-top-level-p listener))
+                                  :timeout 10))))
+      (if clicked
+          (note "restarts panel: clicking restart 0 returned to the top level")
+          (progn
+            (note "restarts panel: the click did NOT return to the top level")
+            ;; Leave the listener usable for whatever runs next regardless.
+            (abort-evaluation listener)
+            (wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 10)))
+      (list (cons "debugger" transcript)
+            (cons "restarts" (and panel clicked))))))
 
 (defun shoot-interrupt (listener directory)
   "A form that never returns, and the prompt got back with Interrupt.
@@ -202,7 +229,7 @@ image can actually show -- the form, then a fresh prompt below it."
       (note "screenshots: the loop did not hold the listener; the shot is wrong"))
     (abort-evaluation listener)
     (and (wait-for (lambda () (waiting-at-top-level-p listener)) :timeout 10)
-         (capture listener directory "interrupt.png"))))
+         (capture (listener-window listener) directory "interrupt.png"))))
 
 ;;; The driver ----------------------------------------------------------------
 
@@ -233,9 +260,11 @@ Exit code 0 only when every shot was written."
     ;; debugger therefore goes LAST: taken in the middle, its condition and
     ;; restarts would sit above the interrupt shot, which has nothing to do with
     ;; them and is the harder picture to read for it.
-    (let ((results (list (cons "session" (shoot-session listener directory))
-                         (cons "interrupt" (shoot-interrupt listener directory))
-                         (cons "debugger" (shoot-debugger listener directory)))))
+    (let ((results (append
+                    (list (cons "session" (shoot-session listener directory))
+                          (cons "interrupt" (shoot-interrupt listener directory)))
+                    ;; Two shots, and a click: see SHOOT-DEBUGGER.
+                    (shoot-debugger listener directory))))
       (let ((missing (mapcar #'car (remove-if #'cdr results))))
         (note "screenshots: ~d of ~d written~@[; missing: ~{~a~^, ~}~]"
               (count-if #'cdr results) (length results) missing)

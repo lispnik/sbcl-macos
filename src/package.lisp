@@ -23,4 +23,5 @@
    ;; Control.
    #:abort-evaluation
    #:clear-transcript
+   #:*restarts-panel-enabled*
    #:safepoint-build-p))

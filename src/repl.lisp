@@ -72,12 +72,6 @@ SETF is sequential, so oldest first is not a stylistic choice."
 
 ;;; The debugger --------------------------------------------------------------
 
-(defun report-condition (condition)
-  (handler-case (princ-to-string condition)
-    (error (inner)
-      (format nil "A condition of type ~a whose own report signalled: ~a"
-              (type-of condition) inner))))
-
 (defun print-restarts (listener restarts)
   (let ((stream (listener-output listener)))
     (with-output-kind (stream :error)
@@ -120,6 +114,10 @@ transfers control through a restart or aborts to the top level."
       (format stream "~&~%~a~%  [Condition of type ~a]~%"
               (report-condition condition) (type-of condition)))
     (print-restarts listener restarts)
+    ;; The panel is an ADDITION: the numbered list above is still printed and
+    ;; the prompt below still takes a number.  Clicking a button types that
+    ;; number, so both doors lead to the same READ-LINE.
+    (offer-restarts listener condition restarts)
     (drain-pending-whitespace *standard-input*)
     (setf (listener-debug-level listener) (1+ saved))
     ;; No ABORT restart is established here on purpose.  Aborting means "back to
@@ -148,7 +146,8 @@ transfers control through a restart or aborts to the top level."
                     (unless (eq form +eof+)
                       (print-values listener
                                     (multiple-value-list (eval form))))))))))
-      (setf (listener-debug-level listener) saved))
+      (setf (listener-debug-level listener) saved)
+      (withdraw-restarts listener))
     ;; THIS MUST NOT RETURN; see the docstring.  Reached only on end of input.
     (ignore-errors (abort))
     (note "the listener's input ended inside the debugger.")))

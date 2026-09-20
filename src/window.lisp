@@ -4,10 +4,6 @@
 
 (in-package #:lisp-listener)
 
-(defconstant +ns-window-style-mask+ 15
-  "Titled, closable, miniaturizable, resizable.")
-(defconstant +ns-backing-store-buffered+ 2)
-
 (defparameter +default-frame+ #(0d0 0d0 760d0 520d0))
 
 ;;; The view ------------------------------------------------------------------

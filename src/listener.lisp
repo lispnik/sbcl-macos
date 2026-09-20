@@ -29,6 +29,8 @@ an IMP is handed self and its arguments and nothing else.")
   ;; Cocoa side, so if nothing here held them they would be collected while
   ;; still installed.  A plist, because there are three of them.
   (retained '())
+  ;; The restarts panel, while a debugger level has one up.  Thread 1 only.
+  restarts-panel
   ;; Set from MAIN when the application is a bundle, so that quitting can go
   ;; through -[NSApplication terminate:] rather than SB-EXT:EXIT.
   (bundled nil))
@@ -42,3 +44,13 @@ signal -- a libdispatch worker.  AppKit reaches libdispatch on its own, so a
 Cocoa application wants one whether or not it uses GCD itself.  See
 lispnik/objc's doc/sbcl-libdispatch-safepoint.md."
   (and (member :sb-safepoint *features*) t))
+
+(defun report-condition (condition)
+  "CONDITION's report as a string, even when the report itself signals.
+
+Here rather than beside the debugger because both the transcript and the
+restarts panel need it, and they load in that order."
+  (handler-case (princ-to-string condition)
+    (error (inner)
+      (format nil "A condition of type ~a whose own report signalled: ~a"
+              (type-of condition) inner))))

@@ -17,6 +17,11 @@
 ;;; Cocoa constants -----------------------------------------------------------
 
 (defconstant +ns-view-width-and-height-sizable+ 18)
+(defconstant +ns-window-style-titled+ 1)
+(defconstant +ns-window-style-closable+ 2)
+(defconstant +ns-window-style-mask+ 15
+  "Titled, closable, miniaturizable, resizable.")
+(defconstant +ns-backing-store-buffered+ 2)
 (defconstant +png-file-type+ 4
   "NSBitmapImageFileTypePNG, for -representationUsingType:properties:.")
 

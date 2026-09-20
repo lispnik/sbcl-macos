@@ -32,6 +32,7 @@ an SBCL built --with-sb-safepoint; see the README for why."
                  (:file "listener")
                  (:file "view")
                  (:file "streams")
+                 (:file "restarts")
                  (:file "repl")
                  (:file "window")
                  (:file "screenshot")

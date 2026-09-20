@@ -102,9 +102,13 @@ try to reach thread 1 before there is a view to deliver the hop to."
   (let ((listener (make-listener)))
     (setf *listener* listener)
     (let ((controller (make-instance 'listener-controller))
-          (delegate (make-instance 'listener-application-delegate)))
+          (delegate (make-instance 'listener-application-delegate))
+          (restarts (make-instance 'restarts-controller)))
+      ;; A button's target is NOT retained by Cocoa, so the restarts controller
+      ;; has to be held here or it would be collected while still installed.
       (setf (getf (listener-retained listener) :controller) controller
-            (getf (listener-retained listener) :application-delegate) delegate)
+            (getf (listener-retained listener) :application-delegate) delegate
+            (getf (listener-retained listener) :restarts-controller) restarts)
       (make-listener-window listener :title title)
       (install-menu (objc:objc-object-pointer controller))
       (objc:invoke (objc.runloop:shared-application) "setDelegate:"
@@ -148,7 +152,7 @@ hopes is a test that goes red on a loaded machine and teaches nobody anything."
           do (objc.runloop:pump-events :seconds 0.05d0 :max-seconds 0.2d0
                                        :until (constantly nil))
              (setf found (self-test-answered-p listener)))
-    (when path (write-window-png listener path))
+    (when path (write-window-png (listener-window listener) path))
     (note "selftest: ~a => ~a~@[, png ~a~]"
           +self-test-form+
           (if found +self-test-expected+ "NOT FOUND")
