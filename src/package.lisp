@@ -24,4 +24,6 @@
    #:abort-evaluation
    #:clear-transcript
    #:*restarts-panel-enabled*
+   #:*backtrace-enabled*
+   #:*backtrace-frames*
    #:safepoint-build-p))

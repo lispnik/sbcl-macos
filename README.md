@@ -30,6 +30,15 @@ set of buttons.
 
 ![The restarts panel](doc/screenshots/restarts.png)
 
+Both the transcript and the panel also carry a **backtrace**, which is the
+other half of what the LispWorks Debugger tool shows: the restarts say what you
+can do, the frames say where you are. They come from SBCL's own
+`sb-debug:list-backtrace` with `:from :debugger-frame` — what SBCL's debugger
+itself uses, and what makes the result start at the frame that signalled rather
+than at `invoke-debugger` and the hook. The frames below the listener's own
+`listener-rep` are cut, since they are the same every time, and
+`lisp-listener:*backtrace-frames*` sets the depth.
+
 It is an **addition**. The transcript still prints the list, the prompt still
 takes a number, and the panel is not modal — the listener window keeps the
 keyboard, so you can type the number with the panel open. Clicking a button

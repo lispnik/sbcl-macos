@@ -72,6 +72,79 @@ SETF is sequential, so oldest first is not a stylistic choice."
 
 ;;; The debugger --------------------------------------------------------------
 
+(defparameter *backtrace-enabled* t
+  "Whether entering the debugger also shows a backtrace.")
+
+(defparameter *backtrace-frames* 12
+  "How many frames to show.  SBCL's own REPL shows a similar handful; the rest
+is almost always this program rather than yours.")
+
+(defun frame-line (frame)
+  "One frame, on one line.
+
+SB-DEBUG hands back the call as a form, and left to itself the pretty printer
+spreads a wide one over five lines, which turns a twelve-frame backtrace into a
+page.  Depth and length are capped instead, the way a debugger caps them."
+  (let ((*print-pretty* nil)
+        (*print-level* 3)
+        (*print-length* 6)
+        (*print-circle* t)
+        (*print-readably* nil))
+    (handler-case (princ-to-string frame)
+      (error () "(unprintable frame)"))))
+
+(defun listener-frame-p (frame)
+  "Whether FRAME is the listener evaluating a form, rather than the form.
+
+The frame's OPERATOR, never its printed text.  Matching the printed line for
+the name was the first attempt and it is wrong: a frame whose ARGUMENTS happen
+to print that name truncates the backtrace at itself, so evaluating something
+as innocent as (list \"LISTENER-REP\") would give a mysteriously short
+backtrace.  Found by a test whose own label string contained the name, which
+made the trim appear to work for entirely the wrong reason."
+  (and (consp frame)
+       (symbolp (first frame))
+       (eq (first frame) 'listener-rep)))
+
+(defun trim-listener-frames (frames count)
+  "Cut FRAMES where the listener's own machinery begins, and cap the rest.
+
+Everything below LISTENER-REP is this program evaluating your form -- EVAL, the
+read loop, the thread function -- and it is the same frames every time, on
+every error."
+  (let ((end (or (position-if #'listener-frame-p frames) (length frames))))
+    (subseq frames 0 (min end count))))
+
+(defun capture-backtrace (&optional (count *backtrace-frames*))
+  "The frames beneath the error, as numbered strings.
+
+CAPTURED HERE, inside the hook, because here is the only place the stack still
+exists: by the time a restart has been chosen it has been unwound.
+
+:FROM :DEBUGGER-FRAME is what SBCL's own debugger uses and is what makes the
+result readable -- it starts at the frame that signalled and skips
+INVOKE-DEBUGGER, RUN-HOOK and this hook itself, which are ours and are never
+what anyone wants to see first.  A few extra frames are asked for because
+TRIM-LISTENER-FRAMES may drop some."
+  (handler-case
+      ;; Trimmed as FRAMES and printed afterwards: the decision is about which
+      ;; function a frame is, which only the frame itself can answer.
+      (let* ((raw (sb-debug:list-backtrace :count (+ count 8) :from :debugger-frame))
+             (frames (trim-listener-frames raw count)))
+        (loop for frame in frames
+              for index from 0
+              collect (format nil "~2d: ~a" index (frame-line frame))))
+    (error (condition)
+      (list (format nil "(the backtrace could not be taken: ~a)" condition)))))
+
+(defun print-backtrace-lines (listener lines)
+  (when lines
+    (let ((stream (listener-output listener)))
+      (with-output-kind (stream :note)
+        (format stream "~&Backtrace:~%")
+        (dolist (line lines)
+          (format stream "  ~a~%" line))))))
+
 (defun print-restarts (listener restarts)
   (let ((stream (listener-output listener)))
     (with-output-kind (stream :error)
@@ -114,10 +187,12 @@ transfers control through a restart or aborts to the top level."
       (format stream "~&~%~a~%  [Condition of type ~a]~%"
               (report-condition condition) (type-of condition)))
     (print-restarts listener restarts)
-    ;; The panel is an ADDITION: the numbered list above is still printed and
-    ;; the prompt below still takes a number.  Clicking a button types that
-    ;; number, so both doors lead to the same READ-LINE.
-    (offer-restarts listener condition restarts)
+    (let ((backtrace (and *backtrace-enabled* (capture-backtrace))))
+      (print-backtrace-lines listener backtrace)
+      ;; The panel is an ADDITION: the numbered list above is still printed and
+      ;; the prompt below still takes a number.  Clicking a button types that
+      ;; number, so both doors lead to the same READ-LINE.
+      (offer-restarts listener condition restarts backtrace))
     (drain-pending-whitespace *standard-input*)
     (setf (listener-debug-level listener) (1+ saved))
     ;; No ABORT restart is established here on purpose.  Aborting means "back to

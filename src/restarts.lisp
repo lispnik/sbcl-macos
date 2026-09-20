@@ -44,6 +44,9 @@ was before this file existed.")
 (defparameter *restart-button-gap* 4d0)
 (defparameter *restarts-panel-margin* 14d0)
 (defparameter *restarts-panel-label-height* 38d0)
+(defparameter *backtrace-pane-height* 150d0
+  "How tall the backtrace pane is.  It scrolls, so this is a window onto the
+frames rather than a limit on them.")
 
 ;;; The controller -------------------------------------------------------------
 
@@ -137,6 +140,30 @@ one-line heading, that indentation would survive as ragged gaps."
     (objc:invoke field "setSelectable:" t)
     field))
 
+(defun make-backtrace-pane (lines width y height)
+  "A read-only scrolling view of the frames.  Main thread only.
+
+The LispWorks Debugger tool puts a backtrace beside its restarts, which is the
+arrangement this borrows: the restarts say what you can do, the frames say
+where you are, and neither is much use without the other."
+  (let* ((frame (vector *restarts-panel-margin* y
+                        (- width (* 2 *restarts-panel-margin*)) height))
+         (scroll (objc:invoke (objc:invoke "NSScrollView" "alloc")
+                              "initWithFrame:" frame))
+         (text (objc:invoke (objc:invoke "NSTextView" "alloc")
+                            "initWithFrame:" frame)))
+    (objc:invoke scroll "setHasVerticalScroller:" t)
+    (objc:invoke scroll "setBorderType:" 2)       ; NSBezelBorder
+    (objc:invoke text "setEditable:" nil)
+    (objc:invoke text "setRichText:" nil)
+    (objc:invoke text "setFont:"
+                 (objc:invoke "NSFont" "monospacedSystemFontOfSize:weight:" 10d0 0d0))
+    (objc:invoke text "setString:" (format nil "~{~a~%~}" lines))
+    (objc:invoke scroll "setDocumentView:" text)
+    ;; -setDocumentView: retains it; the +1 from -alloc is ours to drop.
+    (objc:release text)
+    scroll))
+
 (defun condition-summary (condition)
   "One line for the panel's heading.  The transcript has the full report; this
 only has to say which condition the buttons belong to.
@@ -149,16 +176,20 @@ Computed on the listener thread, for the same reason the titles are."
                 (concatenate 'string (subseq squeezed 0 87) "...")
                 squeezed))))
 
-(defun build-restarts-panel (listener heading titles)
-  "A floating panel with one button per restart.  Main thread only.
+(defun build-restarts-panel (listener heading backtrace titles)
+  "A floating panel: the condition, the frames, and a button per restart.
+Main thread only.
 
 Takes finished strings rather than the restarts themselves: see
 RESTART-TITLES for why they cannot be printed here."
   (let* ((count (length titles))
          (width *restarts-panel-width*)
          (row (+ *restart-button-height* *restart-button-gap*))
+         (pane-height (if backtrace *backtrace-pane-height* 0d0))
+         (pane-gap (if backtrace *restart-button-gap* 0d0))
          (height (+ (* 2 *restarts-panel-margin*)
                     *restarts-panel-label-height*
+                    pane-height pane-gap
                     (* count row)))
          (panel (objc:invoke (objc:invoke "NSPanel" "alloc")
                              "initWithContentRect:styleMask:backing:defer:"
@@ -181,9 +212,18 @@ RESTART-TITLES for why they cannot be printed here."
                   (- height *restarts-panel-margin* *restarts-panel-label-height*))))
       (objc:invoke content "addSubview:" label)
       (objc:release label))
+    (when backtrace
+      (let ((pane (make-backtrace-pane
+                   backtrace width
+                   (- height *restarts-panel-margin* *restarts-panel-label-height*
+                      pane-height)
+                   pane-height)))
+        (objc:invoke content "addSubview:" pane)
+        (objc:release pane)))
     (loop for title in titles
           for index from 0
           for y = (- height *restarts-panel-margin* *restarts-panel-label-height*
+                     pane-height pane-gap
                      (* (1+ index) row))
           do (let ((button (make-restart-button title index target width y)))
                (objc:invoke content "addSubview:" button)
@@ -203,10 +243,10 @@ RESTART-TITLES for why they cannot be printed here."
 
 ;;; Showing and hiding ----------------------------------------------------------
 
-(defun show-restarts-panel (listener heading titles)
-  "Put TITLES on screen as buttons under HEADING.  Main thread only."
+(defun show-restarts-panel (listener heading backtrace titles)
+  "Put TITLES on screen as buttons under HEADING and the frames.  Thread 1."
   (hide-restarts-panel listener)
-  (let ((panel (build-restarts-panel listener heading titles)))
+  (let ((panel (build-restarts-panel listener heading backtrace titles)))
     (setf (listener-restarts-panel listener) panel)
     (position-restarts-panel listener panel)
     ;; -orderFront: rather than -makeKeyAndOrderFront:.  The listener window
@@ -249,7 +289,7 @@ that tag was found."
 
 ;;; What the debugger calls ------------------------------------------------------
 
-(defun offer-restarts (listener condition restarts)
+(defun offer-restarts (listener condition restarts &optional backtrace)
   "Show the restarts, from the listener thread.  Never blocks it.
 
 :WAIT NIL, so the listener thread goes straight on to its prompt: the panel and
@@ -260,7 +300,8 @@ shut the other one."
      ;; Printed HERE, on the listener thread, and handed over as text.
      (let ((heading (condition-summary condition))
            (titles (restart-titles restarts)))
-       (on-main-thread () (show-restarts-panel listener heading titles)))))
+       (on-main-thread ()
+         (show-restarts-panel listener heading backtrace titles)))))
   restarts)
 
 (defun withdraw-restarts (listener)
