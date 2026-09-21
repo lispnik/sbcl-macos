@@ -49,6 +49,10 @@ real gray streams, the real reader, evaluator, printer and debugger — and driv
 it through a session, an error, `use-value`, `store-value`, `y-or-n-p` and an
 abort, reading the transcript back and asserting on it. Only Cocoa is hollow.
 
+It also runs **two listeners at once** (`case-two-listeners`), which is the half
+of New Listener that is not the window: two threads, two queues, two
+transcripts, and the registry that decides which is which.
+
 Two things make it possible, and both are load-bearing:
 
 - `schedule-flush` (`src/streams.lisp`) declines to do anything while
@@ -65,7 +69,7 @@ found, in seconds, a bug that three rounds of CI screenshots had not.
 
 ## Architecture
 
-Two threads, and the split is the whole design.
+Two threads per listener, and the split is the whole design.
 
 **Thread 1** owns AppKit and ends in `-[NSApplication run]`. Every message to a
 view, a window or the text storage happens there. **The listener thread** is an
@@ -76,6 +80,18 @@ They meet at two queues: characters main → listener (the listener's
 `*standard-input*` blocks on `src/queue.lisp`), and closures listener → main,
 drained by an IMP that `-performSelectorOnMainThread:withObject:waitUntilDone:modes:`
 delivers (`src/main-thread.lisp`).
+
+**There can be more than one, and New Listener (⌘N) opens one.** `*listeners*`
+is the live set; `*listener*` names whichever listener the code running now
+speaks for and is **bound, never read as "the" listener**: `define-listener-method`
+binds it from the view the IMP arrived on, `start-listener-thread` binds it in
+each thread, and the restarts controller — one per listener — binds it from its
+own slot. Anything reached from a menu item asks `current-listener` instead,
+which is the key window's. A plain function that will be called from more than
+one place resolves from its own argument (see `submit-input`) rather than
+trusting the ambient value; the queue behind `*main-thread-target*` is shared
+and global, so that one target is deliberately just "a view that is still
+alive", repointed on close and never cleared.
 
 Because `read` simply blocks on an incomplete form, **there is no Lisp parser in
 the view**: Return always submits, and if the form is not finished no new prompt
@@ -125,6 +141,34 @@ entire mechanism.
 ## Things that are easy to get wrong
 
 Each of these is a bug that actually happened here.
+
+- **`run-listener` must not use a modal session.** It used
+  `-[NSApplication runModalForWindow:]`, which blocks events to every OTHER
+  window of the application — so New Listener opened a window you could see and
+  not type in. The restarts panel escapes that only by being an `NSPanel`, which
+  works during a modal session; an ordinary second window does not. It is
+  `-[NSApplication run]` now, stopped by `stop-run-loop-soon` when the last
+  window closes.
+
+- **`-[NSApplication stop:]` needs an event behind it.** It raises a flag that
+  `-run` tests after finishing the event in hand and then asking for the NEXT
+  one. Closing the last window is very often the last event there is, so
+  without `post-wakeup-event` the loop sits blocked with the flag set and the
+  REPL never comes back.
+
+- **`applicationShouldTerminateAfterLastWindowClosed:` must answer NIL in a REPL
+  session.** `-terminate:` exits the process, and under `run-listener` that
+  process is somebody's SBCL: answering T killed the REPL instead of returning
+  to it, and did it before `run-listener`'s own unwinding had run. It keys off
+  `*stop-run-loop-on-last-close*`, which is bound — soundly, because the IMP
+  runs on thread 1 inside the `-run` that `run-listener` is blocked in.
+
+- **Never clear `*main-thread-target*` while a listener thread may still
+  write.** A closing listener is still unwinding and still printing, and with a
+  NIL target each write signals inside the debugger hook, which aborts, which
+  loops. It span 204 times in the space of one close. `retarget-main-thread`
+  only ever repoints it; the old view stays a valid receiver because
+  `-releasedWhenClosed` is off and closing deallocates nothing.
 
 - **`unwind-protect` around `listener-loop`, never `handler-case`.** A handler for
   `error` established out there *handles* the condition, and a handled condition

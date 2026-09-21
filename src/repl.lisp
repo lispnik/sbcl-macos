@@ -385,8 +385,14 @@ return.  If something does, the thread ends and says so on the way out."
   (setf (listener-thread listener)
         (bt:make-thread
          (lambda ()
-           (unwind-protect (listener-loop listener)
-             (note "the listener thread has ended.")))
+           ;; Bound here so that everything the thread reaches -- the debugger,
+           ;; the restarts panel, ABORT-EVALUATION's default -- answers for
+           ;; THIS listener.  A thread started while another window was in
+           ;; front would otherwise inherit that window's listener as the
+           ;; global value and quietly act on it.
+           (let ((*listener* listener))
+             (unwind-protect (listener-loop listener)
+               (note "the listener thread has ended."))))
          :name "lisp listener"))
   listener)
 

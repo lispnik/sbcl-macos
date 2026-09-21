@@ -49,42 +49,103 @@ Returns (VALUES POINTER OBJECT)."
   ()
   (:objc-class-name "LispListenerWindowDelegate"))
 
-(defparameter +modal-run-loop-modes+
-  #("NSModalPanelRunLoopMode" "kCFRunLoopDefaultMode")
-  "The modes a modal session may be running in.  Anything scheduled for
-delivery during -runModalForWindow: has to name NSModalPanelRunLoopMode: the
-session runs in that mode, so work queued for the default mode alone is queued
-for a mode that is not running and never arrives.")
+(defvar *stop-run-loop-on-last-close* nil
+  "Whether closing the last listener window should end the event loop.
 
-(defun stop-modal-soon ()
-  "Ask for -stopModal on the next pass of the run loop.
+Bound by RUN-LISTENER, which borrowed thread 1 from a REPL and has to give it
+back.  Left NIL by MAIN, where the whole process is the application and the
+delegate's -applicationShouldTerminateAfterLastWindowClosed: quits instead.
 
-NEVER send -stopModal synchronously from inside an AppKit callback.  A real
-click on the close widget runs inside that button's mouse-tracking loop, itself
-nested inside the modal loop, and -windowWillClose: fires down there; ending
-the session on the spot hands control back while AppKit is still unwinding, and
-leaves the window drawn but dead with nothing pumping events.  Deferring lets
-the current event, and everything nested in it, finish first."
-  (objc:invoke (objc.runloop:shared-application)
-               "performSelector:withObject:afterDelay:inModes:"
-               (objc:coerce-to-selector "stopModal")
-               nil 0d0 +modal-run-loop-modes+))
+A dynamic binding and not an assignment, and that is sound rather than lucky:
+-windowWillClose: is an IMP that AppKit calls on thread 1, from inside the
+-[NSApplication run] that RUN-LISTENER is blocked in, so it runs within the
+binding's extent.")
+
+(defparameter +ns-event-type-application-defined+ 15
+  "NSEventTypeApplicationDefined.  An event AppKit has no meaning for, which
+is what makes it safe to post purely to wake the loop up.")
+
+(defun post-wakeup-event (application)
+  "Queue a do-nothing event, so the next -nextEventMatchingMask: returns.
+
+-[NSApplication stop:] only raises a flag, which -run tests after it finishes
+the event in hand and then asks for the NEXT one.  Closing the last window is
+very often the last event there is, so without something in the queue -run
+sits blocked with the flag set, the window gone and the REPL never coming
+back.  This is that something."
+  (let ((event (ignore-errors
+                (objc:invoke "NSEvent"
+                             "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
+                             +ns-event-type-application-defined+
+                             #(0d0 0d0) 0 0d0 0 nil 0 0 0))))
+    (when (and event (cffi:pointerp event) (not (cffi:null-pointer-p event)))
+      (objc:invoke application "postEvent:atStart:" event t)
+      t)))
+
+(defun stop-run-loop-soon ()
+  "Ask -[NSApplication run] to return, on the next pass of the run loop.
+
+NEVER send -stop: synchronously from inside an AppKit callback.  A real click
+on the close widget runs inside that button's mouse-tracking loop, and
+-windowWillClose: fires down there; ending the loop on the spot hands control
+back while AppKit is still unwinding, and leaves the application drawn but
+dead with nothing pumping events.  Deferring lets the current event, and
+everything nested in it, finish first.
+
+The wake-up is queued first on purpose.  It simply waits until -run asks for
+an event, which is the moment that must not block; whether it was posted
+before or after the flag was raised makes no difference to AppKit."
+  (when *stop-run-loop-on-last-close*
+    (let ((application (objc.runloop:shared-application)))
+      (post-wakeup-event application)
+      (objc:invoke application
+                   "performSelector:withObject:afterDelay:inModes:"
+                   (objc:coerce-to-selector "stop:")
+                   nil 0d0 +common-run-loop-modes+))))
+
+(defun retarget-main-thread ()
+  "Point the drain hop at a view that still exists.
+
+The hop is -performSelectorOnMainThread: to one particular object and the
+queue behind it is shared, so any live listener's view will carry it -- but
+the one that was chosen may be the one whose window has just closed, and
+messaging a view whose last reference went with it corrupts rather than
+errors."
+  (unless (and *main-thread-target*
+               (find *main-thread-target* *listeners*
+                     :test #'same-objc-object-p :key #'listener-view))
+    ;; Only ever REPOINTED, never cleared.  The closing listener's thread is
+    ;; still unwinding and still writing -- the prompt it is about to print,
+    ;; the note that it aborted -- and a NIL target makes each of those writes
+    ;; signal, inside the debugger hook, which aborts, which loops.  That is
+    ;; not hypothetical: it span 204 times in the space of one close.  The old
+    ;; view stays a valid receiver either way, because -releasedWhenClosed is
+    ;; off and closing a window therefore deallocates nothing.
+    (let ((listener (first *listeners*)))
+      (when listener
+        (setf *main-thread-target* (listener-view listener))))))
 
 (objc:define-objc-method ("windowWillClose:" :void)
     ((self listener-window-delegate) (notification objc:objc-object-pointer))
   (declare (ignorable notification))
   ;; Nothing may unwind into AppKit.
   (handler-case
-      (let ((listener *listener*))
+      ;; THIS window's listener, asked of the notification, never *LISTENER*.
+      ;; With two open, closing the background one would otherwise send the
+      ;; front one's reader an end of file and abort what it was evaluating.
+      (let* ((window (ignore-errors (objc:invoke notification "object")))
+             (listener (or (listener-for-window window) *listener*)))
         (when listener
           ;; End of input, so a listener parked in READ stops rather than
           ;; waiting on a window that has gone.
           (queue-set-eof (listener-input listener))
-          (abort-evaluation listener))
-        ;; AppKit does not end a modal session just because the window closed,
-        ;; so RUN-LISTENER would never return without this.  Harmless when
-        ;; there is no session -- MAIN is in -run, not in a modal loop.
-        (stop-modal-soon))
+          (abort-evaluation listener)
+          (unregister-listener listener)
+          (retarget-main-thread))
+        ;; The session ends with the LAST window, not with any window: one of
+        ;; three closing leaves two that still need an event loop under them.
+        (unless *listeners*
+          (stop-run-loop-soon)))
     (error (condition) (note "windowWillClose: ~a" condition))))
 
 (defun make-listener-window (listener &key (title "Lisp Listener")
@@ -115,11 +176,16 @@ Main thread only.  Returns LISTENER."
       (objc:invoke window "center")
       (setf (listener-view listener) view
             (listener-view-object listener) object
-            (listener-window listener) window
-            ;; The delegate is unretained by the window, so the structure holds
-            ;; it.  (The view object is held by the bridge's identity map until
-            ;; -dealloc, but the delegate has nowhere else to live.)
-            *main-thread-target* view)
+            (listener-window listener) window)
+      ;; The drain target is whichever view is handy -- one queue, and any live
+      ;; view can carry the hop -- so a second listener does not take it over.
+      ;; Claiming it every time would leave it on the newest window, and the
+      ;; newest is as likely as any other to be the first one closed.
+      ;; ... and the first of a fresh session claims it outright, so a second
+      ;; RUN-LISTENER in one REPL does not keep hopping through the window of
+      ;; the session before it.
+      (when (or (null *listeners*) (null *main-thread-target*))
+        (setf *main-thread-target* view))
       (setf (getf (listener-retained listener) :window-delegate) delegate)
       listener)))
 
@@ -162,6 +228,27 @@ Main thread only.  Returns LISTENER."
     (objc:invoke holder "release")
     menu))
 
+(defun menu-item-present-p (menu-title item-title)
+  "Whether the menu bar really carries ITEM-TITLE under MENU-TITLE.
+
+Asked of AppKit rather than of the list INSTALL-MENU was written from, so that
+it answers for the menu that exists.  In the bundle that is the question: the
+image is a dumped core, every Objective-C class in it is rebuilt on the way up,
+and a menu item whose action no longer resolves is one nothing else notices."
+  (let* ((main (objc:invoke (objc.runloop:shared-application) "mainMenu"))
+         (holder (and main (cffi:pointerp main) (not (cffi:null-pointer-p main))
+                      (objc:invoke main "itemWithTitle:" menu-title)))
+         (submenu (and holder (cffi:pointerp holder) (not (cffi:null-pointer-p holder))
+                       (objc:invoke holder "submenu")))
+         (item (and submenu (cffi:pointerp submenu) (not (cffi:null-pointer-p submenu))
+                    (objc:invoke submenu "itemWithTitle:" item-title))))
+    (and item (cffi:pointerp item) (not (cffi:null-pointer-p item))
+         ;; A target too.  An item with none is an item the responder chain
+         ;; will quietly decline, which looks exactly like a working menu.
+         (let ((target (objc:invoke item "target")))
+           (and target (cffi:pointerp target) (not (cffi:null-pointer-p target))))
+         t)))
+
 (defun install-menu (controller)
   (let ((main (objc:invoke (objc:invoke "NSMenu" "alloc") "initWithTitle:" "Main"))
         (application (objc.runloop:shared-application)))
@@ -178,10 +265,15 @@ Main thread only.  Returns LISTENER."
                    ("Paste" "paste:" "v")
                    :separator
                    ("Select All" "selectAll:" "a")))
-    ;; These two are the listener's own, so they name the controller rather
-    ;; than trusting the responder chain to find something that answers.
+    ;; These three are the listener's own, so they name the controller rather
+    ;; than trusting the responder chain to find something that answers.  The
+    ;; controller is the application's, not any window's: a menu item's target
+    ;; is not retained, and one hung off the first listener would be pointing
+    ;; at freed memory the moment that window closed.
     (add-submenu main "Listener"
-                 '(("Interrupt" "listenerInterrupt:" ".")
+                 '(("New Listener" "listenerNewListener:" "n")
+                   :separator
+                   ("Interrupt" "listenerInterrupt:" ".")
                    ("Clear Transcript" "listenerClearTranscript:" "k"))
                  controller)
     (let ((windows (add-submenu main "Window"

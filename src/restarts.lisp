@@ -70,6 +70,13 @@ this.")
                  :documentation "Which row Cancel takes: the index, in the rows
 being shown, of the restart that returns to the listener's top level.  NIL when
 it is not among them, in which case Cancel can only close the panel.")
+   (listener :initform nil :accessor controller-listener
+             :documentation "The listener whose panel this controller drives.
+
+One per listener, unlike the menu bar's controller.  The panel's buttons have
+to reach the listener that established the restarts, and `whichever window is
+in front' would be the wrong answer: a background window is perfectly able to
+be the one sitting in the debugger.")
    (titles :initform '() :accessor controller-titles
            :documentation "The rows the table is showing.
 
@@ -121,7 +128,8 @@ debugger that established it."
     ((self restarts-controller) (sender objc:objc-object-pointer))
   (declare (ignorable sender))
   (handler-case
-      (let* ((listener *listener*)
+      (let* ((*listener* (or (controller-listener self) *listener*))
+             (listener *listener*)
              (table (and listener (listener-restarts-table listener))))
         (when (and table (cffi:pointerp table) (not (cffi:null-pointer-p table)))
           (choose-restart (objc:invoke table "selectedRow"))))
@@ -139,7 +147,8 @@ debugger that established it."
   ;; the listener's own, the reader is waiting for exactly this answer, and
   ;; taking it is the same act as typing its number.
   (handler-case
-      (let ((index (controller-cancel-index self)))
+      (let ((*listener* (or (controller-listener self) *listener*))
+            (index (controller-cancel-index self)))
         (if index
             (choose-restart index)
             (hide-restarts-panel *listener*)))

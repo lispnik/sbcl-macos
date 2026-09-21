@@ -244,11 +244,89 @@ exactly that."
     (check (and plain (not (search "…" plain)))
            "a restart that does not ask carries none")))
 
+(defun case-two-listeners ()
+  "Two at once: the registry, and one transcript per listener.
+
+What New Listener opens.  Cocoa is hollow here, so this cannot say the second
+WINDOW works -- that is the macOS workflow's job -- but the half that the
+window is only a face for is all here: two threads, two queues, two
+transcripts, and the bookkeeping that decides which is which."
+  (format t "~&~%Two listeners: each its own thread, queue and transcript.~%")
+  (finish-output)
+  (let ((one (make-listener))
+        (two (make-listener)))
+    (unwind-protect
+         (progn
+           (register-listener one)
+           (register-listener two)
+           (setf *listener* two)
+           (start-listener-thread one)
+           (start-listener-thread two)
+           (check (= 2 (length *listeners*)) "both are registered")
+           (check-text one "CL-USER>" "the first prompts")
+           (check-text two "CL-USER>" "the second prompts")
+
+           ;; The reason the whole thing works: each thread BINDS *LISTENER* to
+           ;; its own, so everything it reaches answers for the right one.  The
+           ;; form is true only if that binding is in place.
+           (say one "(eq (lisp-listener::listener-thread lisp-listener::*listener*) (bt:current-thread))")
+           (check-text one "T" "each thread speaks for its own listener")
+
+           ;; Independence, which is the property a second window is for.
+           (say one "(list :first 111)")
+           (check-text one "(:FIRST 111)" "the first evaluates its own form")
+           (say two "(list :second 222)")
+           (check-text two "(:SECOND 222)" "the second evaluates its own form")
+           (check (not (search "111" (transcript-so-far two)))
+                  "the first's value is NOT in the second's transcript")
+           (check (not (search "222" (transcript-so-far one)))
+                  "nor the second's in the first's")
+
+           ;; An error in one leaves the other at its own top level.
+           (say two "(error \"only in the second\")")
+           (check-text two "Restarts:" "an error puts the second in the debugger")
+           (check (not (search "only in the second" (transcript-so-far one)))
+                  "the first knows nothing of it")
+           (say one "(list :first :unaffected)")
+           (check-text one "(:FIRST :UNAFFECTED)" "and goes on evaluating")
+
+           ;; Closing one: only that one goes, and *LISTENER* falls back.
+           (unregister-listener two)
+           (check (equal (list one) *listeners*) "unregistering takes out just it")
+           (check (eq one *listener*) "*LISTENER* falls back to one that is left")
+           (unregister-listener one)
+           (check (null *listeners*) "and the last one leaves none"))
+      (queue-set-eof (listener-input one))
+      (queue-set-eof (listener-input two))
+      (setf *listeners* '() *listener* nil)
+      (sleep 0.1))))
+
+(defun case-nil-is-nobody ()
+  "SAME-OBJC-OBJECT-P: NIL matches nothing, which is what makes this safe here.
+
+Off macOS every INVOKE answers NIL, so every listener's window is NIL.  A rule
+under which NIL matched NIL would have LISTENER-FOR-WINDOW hand back the first
+listener in the list for any window at all -- including, on a real Mac, for a
+window belonging to a listener that had already gone."
+  (format t "~&~%NIL is not an object: the lookup must not match on it.~%")
+  (finish-output)
+  (check (not (same-objc-object-p nil nil)) "NIL does not match NIL")
+  (check (same-objc-object-p :a :a) "a real object matches itself")
+  (check (not (same-objc-object-p :a :b)) "and does not match another")
+  (let ((one (make-listener)))
+    (unwind-protect
+         (progn
+           (register-listener one)
+           (check (null (listener-for-window nil)) "no listener answers for NIL")
+           (check (null (listener-for-view-object nil)) "nor for a NIL view"))
+      (setf *listeners* '() *listener* nil))))
+
 ;;; ----------------------------------------------------------------------------
 
 (dolist (case '(case-session case-debugger case-use-value case-store-value
                 case-y-or-n-p case-abort case-toplevel-restart-index
-                case-interactive-restarts-are-marked))
+                case-interactive-restarts-are-marked
+                case-two-listeners case-nil-is-nobody))
   (funcall case))
 
 (format t "~&~%headless-test: ~d check~:p, ~d failure~:p~%" *checks* *failures*)

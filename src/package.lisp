@@ -20,6 +20,10 @@
    #:listener-window
    #:listener-thread
    #:*listener*
+   ;; More than one at a time.
+   #:new-listener
+   #:*listeners*
+   #:current-listener
    ;; Control.
    #:abort-evaluation
    #:clear-transcript

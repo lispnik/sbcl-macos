@@ -210,6 +210,12 @@ jobs:
               --eval '(lisp-listener:main)' 2>&1 | tee selftest.log
           grep -q "selftest: (+ 1 2) => 3" selftest.log \
             || { echo "::error::the listener did not evaluate (+ 1 2)" >&2; exit 1; }
+          # The menu bar, asked of AppKit inside the dumped core.  Every other
+          # check of New Listener runs in an image that compiled its own
+          # classes from source; this is the one that runs in the bundle,
+          # which is where a Lisp-defined Objective-C method stops surviving.
+          grep -q "New Listener menu item present" selftest.log \
+            || { echo "::error::the New Listener menu item did not survive the dump" >&2; exit 1; }
           test -s "$LISP_LISTENER_SELFTEST" \
             || { echo "::error::the self-test wrote no image" >&2; exit 1; }
 

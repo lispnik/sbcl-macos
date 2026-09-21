@@ -51,6 +51,13 @@ that thread is already sitting in `read-line` waiting for exactly this answer.
 So there is one mechanism with two doors, not two mechanisms. Set
 `lisp-listener:*restarts-panel-enabled*` to `nil` for the transcript alone.
 
+**New Listener (⌘N)**, in the Listener menu, opens another one. Each window has
+its own thread, its own input queue and its own transcript, and they share only
+the image they evaluate in — so a form that never returns in one leaves the
+others typing, and a window sitting at `[1] CL-USER>` in its debugger leaves the
+others at their own top level. Closing a window ends that listener alone; the
+application goes when the last one does.
+
 Evaluation is on another thread, so a form that never returns leaves the window
 responsive, and Interrupt (⌘.) gets the prompt back.
 
@@ -172,13 +179,21 @@ quits. The result goes to the bundle's log.
 
 ## How it works
 
-Two threads, and the split is the whole design.
+Two threads per listener, and the split is the whole design.
 
 **Thread 1** owns AppKit and ends up in `-[NSApplication run]`. Every message
 to a view, a window or the text storage happens there. **The listener thread**
 is an ordinary SBCL thread running read-eval-print; it touches only Lisp state.
 So a form that takes a minute, or loops forever, never freezes the window — and
 ⌘. gets the prompt back.
+
+With more than one window open there is one thread 1 and one listener thread
+each. `lisp-listener:*listeners*` is the live set; `*listener*` names whichever
+one the code running at that moment speaks for, and it is **bound** rather than
+assigned — each view's Objective-C methods bind it to the listener whose view it
+is, and each listener thread to its own. A menu command instead asks for the key
+window's, through `current-listener`, because a menu item's action arrives
+saying nothing about which window it came from.
 
 They meet at two queues. Characters go main → listener, and the listener's
 `*standard-input*` blocks on that queue. Closures go listener → main, drained

@@ -11,7 +11,18 @@
   "The listener this image is running, or NIL.
 
 A special rather than an argument because the Objective-C callbacks reach it:
-an IMP is handed self and its arguments and nothing else.")
+an IMP is handed self and its arguments and nothing else.
+
+With more than one listener open this names whichever one the code running
+right now speaks for, and it is BOUND rather than assigned: each view IMP
+binds it to the listener whose view it is, each listener thread to its own.
+The assignment in BUILD-LISTENER is only the starting value.")
+
+(defvar *listeners* '()
+  "Every live listener, newest first.  Thread 1 owns this list.
+
+Closing a window takes its listener out, so `are there any left' and `is it
+time to put the event loop away' are the same question.")
 
 (defstruct (listener (:constructor %make-listener))
   ;; The Cocoa side.  Main thread only.
@@ -37,6 +48,54 @@ an IMP is handed self and its arguments and nothing else.")
   ;; Set from MAIN when the application is a bundle, so that quitting can go
   ;; through -[NSApplication terminate:] rather than SB-EXT:EXIT.
   (bundled nil))
+
+;;; Which listener is which -------------------------------------------------
+;;;
+;;; Below the structure because every one of these reads a slot of it.
+
+(defun register-listener (listener)
+  (pushnew listener *listeners*)
+  listener)
+
+(defun unregister-listener (listener)
+  (setf *listeners* (remove listener *listeners*))
+  (when (eq *listener* listener)
+    (setf *listener* (first *listeners*)))
+  listener)
+
+(defun same-objc-object-p (a b)
+  "Whether A and B are the same Objective-C object.
+
+NIL matches nothing, deliberately.  Off macOS every INVOKE answers NIL, so a
+rule under which NIL matched NIL would make every listener look like every
+other one and the first in the list would answer for all of them."
+  (cond ((or (null a) (null b)) nil)
+        ((and (cffi:pointerp a) (cffi:pointerp b)) (cffi:pointer-eq a b))
+        (t (eql a b))))
+
+(defun listener-for-window (window)
+  (and window
+       (find window *listeners* :test #'same-objc-object-p :key #'listener-window)))
+
+(defun listener-for-view-object (object)
+  "The listener whose view is OBJECT -- the Lisp object, not the pointer.
+
+Compared with EQL, which works where pointer comparison does not: the bridge
+hands an IMP the same Lisp object every time."
+  (and object (find object *listeners* :key #'listener-view-object)))
+
+(defun current-listener ()
+  "The listener a menu command means: the one whose window is key.
+
+A menu item's action arrives saying nothing about which window it was meant
+for, so the application has to be asked.  Falling back to *LISTENER* keeps the
+answer sensible while no window is key -- during startup, or when another
+application is in front."
+  (or (let ((key (ignore-errors
+                  (objc:invoke (objc.runloop:shared-application) "keyWindow"))))
+        (listener-for-window key))
+      *listener*
+      (first *listeners*)))
 
 (defun safepoint-build-p ()
   "True on an SBCL built --with-sb-safepoint.

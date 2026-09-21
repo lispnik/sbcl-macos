@@ -205,9 +205,15 @@ read-only in the same breath.  Nothing is echoed: it is already on screen."
       (when (and (plusp (length trimmed))
                  (not (and history (string= trimmed (first history)))))
         (push trimmed (view-history view))))
-    (when *listener*
-      (queue-push-string (listener-input *listener*)
-                         (concatenate 'string text (string #\Newline))))
+    ;; THIS view's listener, worked out from the view, rather than whichever
+    ;; one *LISTENER* happens to name.  The IMP that calls this binds it
+    ;; correctly, but SUBMIT-INPUT is also called directly -- by the screenshot
+    ;; driver and the self-test -- and a function that reads the ambient value
+    ;; puts one window's keystrokes on another window's input queue.
+    (let ((listener (or (listener-for-view-object view) *listener*)))
+      (when listener
+        (queue-push-string (listener-input listener)
+                           (concatenate 'string text (string #\Newline)))))
     (apply-typing-attributes pointer)
     (scroll-to-end pointer)
     text))
@@ -289,7 +295,14 @@ POINTER to its Objective-C pointer; BODY may not unwind."
   `(objc:define-objc-method (,selector ,result-type)
        ((self listener-text-view pointer) ,@argspecs)
      (declare (ignorable pointer ,@(mapcar #'first argspecs)))
-     (handler-case (progn ,@body)
+     (handler-case
+         ;; Bound, not read: every IMP here speaks for the listener whose view
+         ;; it is, which is not necessarily the one in front.  A key press
+         ;; arrives at the window that has the keyboard, but a drain hop is
+         ;; delivered to whichever view was handy, and output bound for a
+         ;; background window must not be submitted to the front one.
+         (let ((*listener* (or (listener-for-view-object self) *listener*)))
+           ,@body)
        (error (condition)
          (note "~a: ~a" ,selector condition)
          ,on-error))))
