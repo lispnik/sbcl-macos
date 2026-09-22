@@ -39,6 +39,10 @@ time to put the event loop away' are the same question.")
   ;; read on thread 1 by completion, which cannot see the thread's binding.
   ;; NIL until the first prompt; LISTENER-COMPLETION-PACKAGE supplies CL-USER.
   (package nil)
+  ;; The prompt the listener thread is waiting at, as text, or NIL while it is
+  ;; evaluating.  Written there, read by CLEAR-TRANSCRIPT on thread 1 so that a
+  ;; cleared window starts with the prompt it is actually waiting at.
+  (prompt nil)
   ;; Lisp objects for Objective-C classes that something unretained points at:
   ;; a window's delegate and the application's are both weak references on the
   ;; Cocoa side, so if nothing here held them they would be collected while

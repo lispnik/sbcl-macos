@@ -346,12 +346,27 @@ window belonging to a listener that had already gone."
   (check (eq (listener-completion-package listener) (find-package "KEYWORD"))
          "and so does the package completion reads"))
 
+(defcase case-prompt-is-recorded "Clear Transcript's prompt: recorded while waiting, NIL while not."
+  (flet ((prompt-becomes (text)
+           (loop repeat 200
+                 until (equal (listener-prompt listener) text)
+                 do (sleep 0.02))
+           (equal (listener-prompt listener) text)))
+    (check (prompt-becomes "CL-USER> ") "waiting at the top level records its prompt")
+    (say listener "(format t \"during: ~s~%\" (lisp-listener::listener-prompt lisp-listener::*listener*))")
+    (check-text listener "during: NIL" "evaluating records none")
+    (say listener "(error \"boom\")")
+    (check (prompt-becomes "[1] CL-USER> ") "a debugger level records its own")
+    (say listener "(in-package :keyword)")
+    (check (prompt-becomes "[1] KEYWORD> ") "and follows IN-PACKAGE")))
+
 ;;; ----------------------------------------------------------------------------
 
 (dolist (case '(case-session case-debugger case-use-value case-store-value
                 case-y-or-n-p case-abort case-toplevel-restart-index
                 case-interactive-restarts-are-marked
-                case-two-listeners case-nil-is-nobody case-completion))
+                case-two-listeners case-nil-is-nobody case-completion
+                case-prompt-is-recorded))
   (funcall case))
 
 (format t "~&~%headless-test: ~d check~:p, ~d failure~:p~%" *checks* *failures*)

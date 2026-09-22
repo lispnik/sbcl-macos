@@ -32,11 +32,12 @@ sort of thing that makes a listener feel unfinished."
     ;; Published for completion, which runs on thread 1 and so cannot see this
     ;; thread's binding.  At the prompt because that is where IN-PACKAGE shows.
     (setf (listener-package listener) *package*)
-    (with-output-kind (stream :prompt)
-      (fresh-line stream)
-      (when (plusp level)
-        (format stream "[~d] " level))
-      (format stream "~a> " (package-short-name *package*))))
+    (let ((prompt (format nil "~:[~*~;[~d] ~]~a> " (plusp level) level
+                          (package-short-name *package*))))
+      (with-output-kind (stream :prompt)
+        (fresh-line stream)
+        (write-string prompt stream))
+      (setf (listener-prompt listener) prompt)))
   ;; The prompt has been handed to thread 1; the typing attributes have to
   ;; follow it there, or what is typed next comes out prompt-coloured.
   (let ((pointer (listener-view listener)))
@@ -223,6 +224,7 @@ transfers control through a restart or aborts to the top level."
          (loop
            (emit-prompt listener)
            (let ((line (read-line *standard-input* nil nil)))
+             (setf (listener-prompt listener) nil)
              ;; End of input: the window has gone and nothing can ever be read
              ;; again.  Leave, and let the abort below unwind to the top level.
              (when (null line) (return))
@@ -287,6 +289,9 @@ window, so STORE-VALUE and USE-VALUE ask there rather than nowhere."
 Errors go to the debugger hook, not to here."
   (emit-prompt listener)
   (let ((form (read *standard-input* nil +eof+)))
+    ;; No longer waiting at it: a Clear Transcript from here until the next
+    ;; prompt must not put one back.
+    (setf (listener-prompt listener) nil)
     (cond
       ((eq form +eof+) nil)
       (t

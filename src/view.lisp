@@ -222,6 +222,11 @@ read-only in the same breath.  Nothing is echoed: it is already on screen."
 (defun clear-transcript (&optional (listener *listener*))
   "Empty the transcript, keeping whatever has been typed but not submitted.
 
+If the listener is waiting at a prompt, the cleared window starts with that
+prompt, so what is still typed sits after it as it did before.  While a form
+is being evaluated there is no prompt to put back, and none is invented: the
+next one arrives when the form finishes.
+
 Deleting the characters rather than assigning a fresh empty attributed string:
 -setAttributedString: would want one at +1 that nothing here would release."
   (when listener
@@ -232,10 +237,14 @@ Deleting the characters rather than assigning a fresh empty attributed string:
         (objc:invoke (transcript-storage pointer) "deleteCharactersInRange:"
                      (cons 0 (transcript-length pointer)))
         (setf (view-input-start view) 0)
-        (transcript-append view pending :input)
-        ;; TRANSCRIPT-APPEND left INPUT-START past the pending text.  It belongs
-        ;; in front of it, so what was typed stays editable.
-        (setf (view-input-start view) 0)
+        (let ((prompt (listener-prompt listener)))
+          (when prompt
+            (transcript-append view prompt :prompt)))
+        (let ((start (view-input-start view)))
+          (transcript-append view pending :input)
+          ;; TRANSCRIPT-APPEND left INPUT-START past the pending text.  It
+          ;; belongs in front of it, so what was typed stays editable.
+          (setf (view-input-start view) start))
         (apply-typing-attributes pointer)
         (scroll-to-end pointer))))
   t)
