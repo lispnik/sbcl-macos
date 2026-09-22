@@ -44,8 +44,7 @@
            #:retain #:release #:autorelease #:retain-count #:with-autorelease-pool
            #:ns-string-to-string #:string-to-ns-string
            #:standard-objc-object #:define-objc-class #:define-objc-method
-           #:define-objc-class-method #:objc-object-from-pointer
-           #:with-objc-block))
+           #:define-objc-class-method #:objc-object-from-pointer))
 
 (defpackage #:cocoa
   (:use #:cl)
@@ -56,7 +55,8 @@
 (defpackage #:uikit
   (:use #:cl)
   (:export #:new #:system-button #:key-window #:root-controller #:root-view
-           #:mono-font #:pin #:on-tap #:after-every #:keep #:unkeep))
+           #:font #:bold-font #:mono-font #:pin #:fix #:on-tap #:after-every
+           #:keep #:unkeep))
 
 (defpackage #:objc.runloop
   (:use #:cl)
@@ -167,11 +167,6 @@
   (declare (ignore options)) `(progn ,@body))
 (defmacro current-super ()
   (error "CURRENT-SUPER is only meaningful inside a method body."))
-(defmacro with-objc-block ((variable type function) &body body)
-  (declare (ignore type))
-  `(let ((,variable ,function))
-     (declare (ignorable ,variable))
-     ,@body))
 
 (defun %parse-body (body)
   "Split BODY into (VALUES FORMS DECLARATIONS), as the real expander does."
@@ -262,9 +257,12 @@
 (defun key-window () nil)
 (defun root-controller () nil)
 (defun root-view () nil)
+(defun font (size &optional (weight 0)) (declare (ignore size weight)) nil)
+(defun bold-font (size) (declare (ignore size)) nil)
 (defun mono-font (size &optional (weight 0)) (declare (ignore size weight)) nil)
 (defun pin (view name other other-name &optional (constant 0))
   (declare (ignore view name other other-name constant)) nil)
+(defun fix (view name constant) (declare (ignore view name constant)) nil)
 (defun on-tap (control function) (declare (ignore function)) control)
 (defun after-every (seconds function &key (repeats t))
   (declare (ignore seconds function repeats)) nil)

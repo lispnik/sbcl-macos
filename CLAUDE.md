@@ -170,8 +170,10 @@ NSTextView and UITextView share.
 - `src/ios/view.lisp` — `LispListenerView` over `UITextView`: Return through the
   delegate, `UIKeyCommand`s for Tab, ↑, ↓, Esc, ⌘. and ⌘K, and a key bar with the
   same keys above the on-screen keyboard.
-- `src/ios/restarts-sheet.lisp` — the restarts as a `UIAlertController` action
-  sheet, whose handlers are blocks made from Lisp closures.
+- `src/ios/restarts-sheet.lisp` — the restarts as a sheet: a `UIViewController`
+  with a `UITableView` whose data source is the same `restarts-controller` the
+  Mac's table uses, presented at `UISheetPresentationController`'s medium
+  detent and draggable to full height.
 - `src/ios/app.lisp` — `ios-start`, and the self-test.
 
 The bundles are separate `.asd` files, `lisp-listener-app.asd` and
@@ -298,6 +300,11 @@ Each of these is a bug that actually happened here.
   `-textViewDidChangeSelection:` puts them back. **A text view keeps Tab and the
   arrows for itself** unless each `UIKeyCommand` sets
   `wantsPriorityOverSystemBehavior`.
+
+- **A `UIAlertController` cannot be made taller.** It is sized by its content,
+  with no supported way to ask for more room, so the restarts came up as a stub
+  at the foot of the screen. A presented controller with **detents** is what
+  has a height of its own; that is why the sheet is one.
 
 - **There is no `NSModalPanelRunLoopMode` on iOS.** That is why the run loop
   modes belong to the front end.

@@ -111,6 +111,13 @@ A step whose predicate has not held within its time fails."
            (lambda () (type-line listener "(error \"boom\")")))
      (list "the restarts sheet appears" (lambda () (restarts-panel-visible-p listener))
            nil)
+     ;; The table, not just the sheet: a data source that was never found
+     ;; answers zero, and a sheet of blank rows looks identical in a picture.
+     (list "its table has a row per restart" (constantly t)
+           (lambda ()
+             (let ((rows (restarts-table-row-count listener)))
+               (unless (and rows (>= rows 2))
+                 (error "the table has ~a rows" rows)))))
      (list :hold nil nil)
      (list "Cancel returns to the top level" (constantly t)
            (lambda ()
