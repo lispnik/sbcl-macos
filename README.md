@@ -63,7 +63,7 @@ responsive, and Interrupt (⌘.) gets the prompt back.
 
 ![Interrupting a long-running form](doc/screenshots/interrupt.png)
 
-These three are not staged. `src/screenshot.lisp` drives a real listener and
+These three are not staged. `src/macos/screenshot.lisp` drives a real listener and
 photographs it, and `.github/workflows/macos.yml` runs it on every push — so
 they are always a picture of the current code, taken on a GitHub macOS runner.
 

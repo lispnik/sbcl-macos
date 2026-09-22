@@ -1,6 +1,11 @@
 ;;;; tools/compile-check.lisp -- compile the listener with the frameworks stubbed.
 ;;;;
-;;;;     sbcl --script tools/compile-check.lisp       (or: make compile-check)
+;;;;     sbcl --script tools/compile-check.lisp macos   (or: make compile-check)
+;;;;     sbcl --script tools/compile-check.lisp ios
+;;;;
+;;;; One front end per run, in a process of its own: src/ plus src/macos/, or
+;;;; src/ plus src/ios/.  Compiling both into one image would let each front end
+;;;; lean on a definition only the other one makes and never be told.
 ;;;;
 ;;;; What this is for: off macOS the system cannot be LOADED at all -- lispnik/objc
 ;;;; opens libobjc the moment it initializes -- so the only way to find out
@@ -18,7 +23,7 @@
 
 (in-package #:cl-user)
 
-;;; `sbcl --script' loads neither ASDF nor UIOP, and src/app.lisp reads
+;;; `sbcl --script' loads neither ASDF nor UIOP, and src/macos/app.lisp reads
 ;;; UIOP:GETENV -- a package that does not exist is a READ error, so this has
 ;;; to happen before anything is compiled.  In a real build ASDF is always
 ;;; present; here it has to be asked for.
@@ -31,12 +36,28 @@
 (defparameter *root*
   (make-pathname :directory (butlast (pathname-directory *here*)) :defaults *here*))
 (defparameter *output*
-  (merge-pathnames "build/compile-check/" *root*))
+  (merge-pathnames (format nil "build/compile-check/~a/"
+                           (or (second sb-ext:*posix-argv*) "macos"))
+                   *root*))
 
-;;; The order is lisp-listener.asd's, which is :SERIAL.
+;;; The orders are lisp-listener.asd's, which are :SERIAL.
+(defparameter *core*
+  '("package" "impl" "main-thread" "queue" "listener" "transcript" "completion"
+    "streams" "restarts" "repl"))
+
+(defparameter *front-ends*
+  '(("macos" "macos/view" "macos/window" "macos/restarts-panel"
+     "macos/screenshot" "macos/app")
+    ("ios" "ios/view" "ios/restarts-sheet" "ios/app")))
+
+(defparameter *front-end*
+  (or (second sb-ext:*posix-argv*) "macos"))
+
 (defparameter *files*
-  '("package" "main-thread" "queue" "listener" "view" "completion" "streams" "restarts"
-    "repl" "window" "screenshot" "app"))
+  (append *core*
+          (or (rest (assoc *front-end* *front-ends* :test #'string=))
+              (progn (format t "~&compile-check: no front end ~s~%" *front-end*)
+                     (sb-ext:exit :code 2)))))
 
 (defvar *errors* 0)
 (defvar *warnings* 0)
@@ -51,6 +72,7 @@
 (dolist (name *files*)
   (let ((source (merge-pathnames (format nil "src/~a.lisp" name) *root*))
         (fasl (merge-pathnames (format nil "~a.fasl" name) *output*)))
+    (ensure-directories-exist fasl)
     (format t "~&;; ~a~%" name)
     (handler-bind
         ((style-warning (lambda (condition)
@@ -82,6 +104,6 @@
           (incf *errors*)
           (format t "~&  ERROR: ~a~%" condition))))))
 
-(format t "~&~%compile-check: ~d error~:p, ~d warning~:p, ~d style warning~:p~%"
-        *errors* *warnings* *style-warnings*)
+(format t "~&~%compile-check (~a): ~d error~:p, ~d warning~:p, ~d style warning~:p~%"
+        *front-end* *errors* *warnings* *style-warnings*)
 (sb-ext:exit :code (if (and (zerop *errors*) (zerop *warnings*)) 0 1))

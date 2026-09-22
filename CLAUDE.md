@@ -4,30 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Lisp Listener in a native Cocoa window, for SBCL on macOS: you type forms into
-an `NSTextView` and the values, the output and the debugger come back in the same
-transcript. Every Objective-C class in it is defined from Lisp through
-[lispnik/objc](https://github.com/lispnik/objc); the `.app` bundle is built by
-[lispnik/asdf-macos-app](https://github.com/lispnik/asdf-macos-app). One package,
+A Lisp Listener in a native window: you type forms into a text view and the
+values, the output and the debugger come back in the same transcript. **Two
+front ends over one core**: AppKit (`NSTextView`) for SBCL on macOS, and UIKit
+(`UITextView`) for ECL on iOS. Every Objective-C class in it is defined from Lisp through
+[lispnik/objc](https://github.com/lispnik/objc); the Mac bundle is built by
+[lispnik/asdf-macos-app](https://github.com/lispnik/asdf-macos-app) and the iOS
+app by [lispnik/asdf-ios-app](https://github.com/lispnik/asdf-ios-app). One package,
 `LISP-LISTENER`; `OBJC` is deliberately not `:USE`d, because it exports `INVOKE`,
 `RELEASE`, `RETAIN` and `DESCRIPTION` and this is the program where an accidental
 capture of one of those is hardest to see.
 
-**It needs an SBCL built `--with-sb-safepoint`.** Darwin refuses to
+**On the Mac it needs an SBCL built `--with-sb-safepoint`.** Darwin refuses to
 `pthread_kill` a libdispatch workqueue thread, so `stop_the_world` calls `lose()`
 and the process dies with no condition and no backtrace. AppKit reaches
 libdispatch on its own account. The program starts on a stock build and says so
-in the transcript rather than refusing.
+in the transcript rather than refusing. (ECL never signals a thread to collect,
+so on iOS the question does not arise.)
 
 ## Build & test
 
 ```sh
 ocicl setup         # once per machine
 make deps           # ocicl install -- restores ./ocicl/ from ocicl.csv
-make check          # all three off-macOS checks, about three seconds
+make check          # all three off-macOS checks; the listener runs on SBCL and ECL
 make run            # a listener from a REPL, on thread 1
 make app            # => build/Lisp Listener.app
+
+make ios-toolchain  # once: asdf-ios-app builds the host and iOS ECLs (~10 min)
+make ios            # => build/iphonesimulator/Lisp Listener.app
+make run-ios        # build, install and launch in the booted simulator
 ```
+
+The iOS targets run under **ECL**, not SBCL: asdf-ios-app is ECL code and
+cross-compiles with the ECL `ios-toolchain` built. The iOS app has a self-test:
+`SIMCTL_CHILD_LISP_LISTENER_SELF_TEST=6 xcrun simctl launch <device>
+org.lispnik.lisp-listener` drives a session, Tab, an error, the restarts sheet
+and Cancel, holding N seconds on the screens worth photographing, and writes
+`selftest: PASS` to `Documents/console.log` in the app's data container.
+Take `xcrun simctl io` screenshots **in the same shell command as the launch**:
+anything slower misses the holds.
 
 The three checks run **anywhere, Linux included**, and that is the point — this
 system cannot be *loaded* off macOS at all, because objc opens libobjc as it
@@ -36,8 +52,9 @@ initialises.
 | target | question it answers |
 |---|---|
 | `make syntax-check` | does it parse? Reads every form with `*read-suppress*`. |
-| `make compile-check` | does it compile? Builds `src/` against `tools/stubs/`. |
-| `make test` | **does the listener work?** |
+| `make compile-check` | does it compile? Builds the core plus **each** front end against `tools/stubs/`, one process per front end. |
+| `make test` | **does the listener work?** On SBCL, with the Mac front end. |
+| `make test-ecl` | the same, on ECL with the iOS front end. `make check` runs it when `ecl` is on the PATH. |
 
 `make check` needs no dependencies at all — it runs against the stubs, so it
 works in a fresh clone before `make deps`.
@@ -59,7 +76,12 @@ Two things make it possible, and both are load-bearing:
   `*main-thread-target*` is NIL, so output piles up in the stream's own segments
   where the test reads it.
 - `tools/stubs/stubs.lisp`'s `bordeaux-threads` is **not** a stub — it delegates
-  to `sb-thread`. Everything else in that file is a name with no behaviour.
+  to `sb-thread`, or to `mp` on ECL. Everything else in that file is a name with
+  no behaviour.
+
+ECL establishes no `USE-VALUE` or `STORE-VALUE` around an unbound variable, so on
+ECL the test reaches one through `cl-user::missing-value`, which establishes
+SBCL's three restarts in SBCL's order and then signals a real `unbound-variable`.
 
 There is no CLI selector for one case; edit the `dolist` at the foot of the file,
 or call one `case-*` function from a REPL after loading the stubs and `src/`.
@@ -71,9 +93,11 @@ found, in seconds, a bug that three rounds of CI screenshots had not.
 
 Two threads per listener, and the split is the whole design.
 
-**Thread 1** owns AppKit and ends in `-[NSApplication run]`. Every message to a
+**Thread 1** owns AppKit or UIKit; on the Mac it ends in `-[NSApplication run]`,
+and on iOS asdf-ios-app's `UIApplicationMain` owns it and calls `ios-start`,
+which must return. Every message to a
 view, a window or the text storage happens there. **The listener thread** is an
-ordinary SBCL thread running read-eval-print and touches only Lisp state. So a
+ordinary Lisp thread running read-eval-print and touches only Lisp state. So a
 form that loops forever never freezes the window, and ⌘. gets the prompt back.
 
 They meet at two queues: characters main → listener (the listener's
@@ -97,32 +121,63 @@ Because `read` simply blocks on an incomplete form, **there is no Lisp parser in
 the view**: Return always submits, and if the form is not finished no new prompt
 appears. That falls out of the design rather than being arranged.
 
-`src/` loads `:serial t` and **the component order in `lisp-listener.asd` is
-load-bearing**: `package main-thread queue listener view completion streams restarts repl
-window screenshot app`. `tools/compile-check.lisp` and `tools/headless-test.lisp`
-each carry the same list by hand; a new file has to be added in all three.
+### Core and front ends
 
+Three systems in `lisp-listener.asd`, each `:serial t`, and **the component
+order is load-bearing**:
+
+- `lisp-listener/core` — `src/`: `package impl main-thread queue listener
+  transcript completion streams restarts repl`. No toolkit; SBCL and ECL.
+- `lisp-listener` — the core plus `src/macos/`: `view window restarts-panel
+  screenshot app`. The name it always had.
+- `lisp-listener/ios` — the core plus `src/ios/`: `view restarts-sheet app`.
+
+`tools/compile-check.lisp` and `tools/headless-test.lisp` each carry the same
+lists by hand; a new file has to be added in all three places.
+
+**The seam is `src/impl.lisp`.** It is the only file in `src/` with `#+sbcl` or
+`#+ecl` (debugger hook, backtrace, restart internals, exit, getenv). The one
+exception is the Gray streams package, which `package.lisp` names with a local
+nickname, `gray-streams`. `impl.lisp` also declaims what each front end must
+define: `transcript-color`, `transcript-font`, `main-thread-run-loop-modes`,
+`show-restarts-panel`, `hide-restarts-panel`, `restarts-panel-visible-p`,
+`current-listener`, and the class `listener-text-view`, with the same slots on
+both. The core only ever touches that class through `-textStorage`,
+`-selectedRange`, `-scrollRangeToVisible:` and `-typingAttributes`, which
+NSTextView and UITextView share.
+
+- `src/impl.lisp` — the seam, above.
 - `src/listener.lisp` — the `listener` struct, holding both halves. **Nothing in
   it may be filled in at load time**: a foreign pointer does not survive
   `save-lisp-and-die` and the bundle is a dumped core.
-- `src/view.lisp` — the `LispListenerView` `NSTextView` subclass, the
-  `define-listener-method` macro (every IMP wrapped in `handler-case`), the
-  transcript primitives and the AppKit constants.
-- `src/completion.lisp` — Tab completion: `-insertTab:`, `-rangeForUserCompletion`
-  and `-completionsForPartialWordRange:…` feed NSTextView's own popup with
-  symbols from the listener's package, which `emit-prompt` publishes in the
-  `listener-package` slot because thread 1 cannot see the thread's `*package*`.
+- `src/transcript.lisp` — the transcript primitives over either text view, and
+  the `define-listener-method` macro (every IMP wrapped in `handler-case`).
+- `src/completion.lisp` — symbol completion, from the listener's package, which
+  `emit-prompt` publishes in the `listener-package` slot because thread 1 cannot
+  see the thread's `*package*`. It also has `complete-at-caret`, the shell-style
+  completion (insert, extend, or list) for a toolkit with no popup.
 - `src/streams.lisp` — the gray streams, and the segment buffer that coalesces a
   thousand `write-char`s into one hop to the main thread.
-- `src/restarts.lisp` — the LispWorks-style restarts panel: an `NSTableView` of
-  whatever `compute-restarts` returned, plus Cancel and Invoke.
+- `src/restarts.lisp` — what the restarts panel does, on either platform: the
+  titles, which restart Cancel means, and the hop to put them up and take them down.
 - `src/repl.lisp` — the listener thread, the debugger and the backtrace.
-- `src/screenshot.lisp` — drives a real listener and photographs it; this is what
+- `src/macos/view.lisp` — `LispListenerView` over `NSTextView`: Return, the
+  arrows, and Tab through NSTextView's own completion popup.
+- `src/macos/restarts-panel.lisp` — the LispWorks-style `NSPanel`: an
+  `NSTableView` of whatever `compute-restarts` returned, plus Cancel and Invoke.
+- `src/macos/screenshot.lisp` — drives a real listener and photographs it; this is what
   produces `doc/screenshots/`, on a CI runner, on every push.
+- `src/ios/view.lisp` — `LispListenerView` over `UITextView`: Return through the
+  delegate, `UIKeyCommand`s for Tab, ↑, ↓, Esc, ⌘. and ⌘K, and a key bar with the
+  same keys above the on-screen keyboard.
+- `src/ios/restarts-sheet.lisp` — the restarts as a `UIAlertController` action
+  sheet, whose handlers are blocks made from Lisp closures.
+- `src/ios/app.lisp` — `ios-start`, and the self-test.
 
-Two `.asd` files, and they must stay separate: `:defsystem-depends-on` is
+The bundles are separate `.asd` files, `lisp-listener-app.asd` and
+`lisp-listener-ios.asd`, and they must stay separate: `:defsystem-depends-on` is
 resolved when a `.asd` is **read**, not when its system is built, so declaring
-the bundle in `lisp-listener.asd` would make `asdf-macos-app` a hard requirement
+either bundle in `lisp-listener.asd` would make its builder a hard requirement
 for anyone who only wants to load the library.
 
 ## CI
@@ -219,6 +274,24 @@ Each of these is a bug that actually happened here.
   the newline the user pressed, but the stream last wrote the prompt and still
   believes it is nine columns in — so `fresh-line` emits a newline that is
   already on screen and every value gets a blank line above it.
+
+- **Output inserted at the caret must carry the caret along.** NSTextView
+  moves a caret that sits at the insertion point; UITextView leaves it behind,
+  in front of the output. `transcript-insert` moves it only if the toolkit did
+  not, so the one code path is right on both.
+
+- **On iOS, Return is not `-insertNewline:`.** It arrives as the delegate being
+  asked whether `"\n"` may replace a range, through
+  `-textView:shouldChangeTextInRange:replacementText:`. AppKit's selector ends in
+  `replacementString:`, and defining that name on iOS does nothing.
+
+- **UIKit resets the typing attributes whenever the selection moves**, so
+  `-textViewDidChangeSelection:` puts them back. **A text view keeps Tab and the
+  arrows for itself** unless each `UIKeyCommand` sets
+  `wantsPriorityOverSystemBehavior`.
+
+- **There is no `NSModalPanelRunLoopMode` on iOS.** That is why the run loop
+  modes belong to the front end.
 
 - **`NSInteger` is `(:signed :long-long)`.** `'l'`/`'L'` are 32 bits even on
   LP64; `NSInteger` encodes as `'q'`.

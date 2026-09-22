@@ -44,11 +44,19 @@
            #:retain #:release #:autorelease #:retain-count #:with-autorelease-pool
            #:ns-string-to-string #:string-to-ns-string
            #:standard-objc-object #:define-objc-class #:define-objc-method
-           #:define-objc-class-method #:objc-object-from-pointer))
+           #:define-objc-class-method #:objc-object-from-pointer
+           #:with-objc-block))
 
 (defpackage #:cocoa
   (:use #:cl)
   (:export #:ns-point #:ns-size #:ns-rect #:ns-range #:ns-not-found))
+
+;;; objc/uikit, which only src/ios/ uses.  Names with no behaviour, like the
+;;; rest; tools/compile-check.lisp's ios pass is what they are for.
+(defpackage #:uikit
+  (:use #:cl)
+  (:export #:new #:system-button #:key-window #:root-controller #:root-view
+           #:mono-font #:pin #:on-tap #:after-every #:keep #:unkeep))
 
 (defpackage #:objc.runloop
   (:use #:cl)
@@ -81,23 +89,50 @@
 ;;; nothing.  SB-THREAD is portable to every platform the check runs on, and
 ;;; the listener uses only this much of bordeaux-threads, so delegating costs
 ;;; nothing and buys a second use for the file.
-(defun make-lock (&optional name)
-  (sb-thread:make-mutex :name (or name "lisp-listener lock")))
-(defmacro with-lock-held ((place) &body body)
-  `(sb-thread:with-mutex (,place) ,@body))
-(defun make-condition-variable (&key name)
-  (sb-thread:make-waitqueue :name (or name "lisp-listener condition")))
-(defun condition-wait (condition lock &key timeout)
-  (sb-thread:condition-wait condition lock :timeout timeout))
-(defun condition-notify (condition)
-  (sb-thread:condition-notify condition))
-(defun make-thread (function &key name)
-  (sb-thread:make-thread function :name (or name "lisp-listener thread")))
-(defun interrupt-thread (thread function)
-  (sb-thread:interrupt-thread thread function))
-(defun thread-alive-p (thread) (sb-thread:thread-alive-p thread))
-(defun current-thread () sb-thread:*current-thread*)
-(defun thread-name (thread) (sb-thread:thread-name thread))
+;;;
+;;; SB-THREAD on SBCL, MP on ECL: `make test-ecl' runs the same listener on the
+;;; Lisp an iOS app runs, and this is all it takes.
+#+sbcl
+(progn
+  (defun make-lock (&optional name)
+    (sb-thread:make-mutex :name (or name "lisp-listener lock")))
+  (defmacro with-lock-held ((place) &body body)
+    `(sb-thread:with-mutex (,place) ,@body))
+  (defun make-condition-variable (&key name)
+    (sb-thread:make-waitqueue :name (or name "lisp-listener condition")))
+  (defun condition-wait (condition lock &key timeout)
+    (sb-thread:condition-wait condition lock :timeout timeout))
+  (defun condition-notify (condition)
+    (sb-thread:condition-notify condition))
+  (defun make-thread (function &key name)
+    (sb-thread:make-thread function :name (or name "lisp-listener thread")))
+  (defun interrupt-thread (thread function)
+    (sb-thread:interrupt-thread thread function))
+  (defun thread-alive-p (thread) (sb-thread:thread-alive-p thread))
+  (defun current-thread () sb-thread:*current-thread*)
+  (defun thread-name (thread) (sb-thread:thread-name thread)))
+#+ecl
+(progn
+  (defun make-lock (&optional name)
+    (mp:make-lock :name (or name "lisp-listener lock")))
+  (defmacro with-lock-held ((place) &body body)
+    `(mp:with-lock (,place) ,@body))
+  (defun make-condition-variable (&key name)
+    (declare (ignore name))
+    (mp:make-condition-variable))
+  (defun condition-wait (condition lock &key timeout)
+    (if timeout
+        (mp:condition-variable-timedwait condition lock timeout)
+        (mp:condition-variable-wait condition lock)))
+  (defun condition-notify (condition)
+    (mp:condition-variable-signal condition))
+  (defun make-thread (function &key name)
+    (mp:process-run-function (or name "lisp-listener thread") function))
+  (defun interrupt-thread (thread function)
+    (mp:interrupt-process thread function))
+  (defun thread-alive-p (thread) (mp:process-active-p thread))
+  (defun current-thread () mp:*current-process*)
+  (defun thread-name (thread) (mp:process-name thread)))
 
 ;;; ---------------------------------------------------------------------------
 
@@ -132,6 +167,11 @@
   (declare (ignore options)) `(progn ,@body))
 (defmacro current-super ()
   (error "CURRENT-SUPER is only meaningful inside a method body."))
+(defmacro with-objc-block ((variable type function) &body body)
+  (declare (ignore type))
+  `(let ((,variable ,function))
+     (declare (ignorable ,variable))
+     ,@body))
 
 (defun %parse-body (body)
   "Split BODY into (VALUES FORMS DECLARATIONS), as the real expander does."
@@ -212,3 +252,21 @@
 (defun window-server-p () nil)
 (defun remember-frontmost () nil)
 (defun restore-frontmost () t)
+
+;;; ---------------------------------------------------------------------------
+
+(in-package #:uikit)
+
+(defun new (class-name) (declare (ignore class-name)) nil)
+(defun system-button (title) (declare (ignore title)) nil)
+(defun key-window () nil)
+(defun root-controller () nil)
+(defun root-view () nil)
+(defun mono-font (size &optional (weight 0)) (declare (ignore size weight)) nil)
+(defun pin (view name other other-name &optional (constant 0))
+  (declare (ignore view name other other-name constant)) nil)
+(defun on-tap (control function) (declare (ignore function)) control)
+(defun after-every (seconds function &key (repeats t))
+  (declare (ignore seconds function repeats)) nil)
+(defun keep (object) object)
+(defun unkeep (object) object)

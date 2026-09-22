@@ -1,4 +1,4 @@
-;;;; src/screenshot.lisp -- driving the listener and photographing it.
+;;;; src/macos/screenshot.lisp -- driving the listener and photographing it.
 ;;;;
 ;;;; LISP_LISTENER_SCREENSHOT=<directory> makes the application run a scripted
 ;;;; session and write a PNG of the window at three points, then leave.  It is
@@ -292,7 +292,7 @@ streams, so the log is flushed by hand first -- in a bundle it is a buffered
 file and everything said here would otherwise go nowhere."
   (ignore-errors (finish-output *log*))
   (ignore-errors (finish-output *error-output*))
-  (sb-ext:exit :code code :abort t))
+  (exit-process code))
 
 (defun run-screenshots ()
   "Drive the listener through three scenes, photograph each, and leave.

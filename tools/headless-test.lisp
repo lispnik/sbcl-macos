@@ -1,6 +1,7 @@
 ;;;; tools/headless-test.lisp -- drive a real listener, with no Mac.
 ;;;;
 ;;;;     sbcl --script tools/headless-test.lisp       (or: make test)
+;;;;     ecl --norc --shell tools/headless-test.lisp  (or: make test-ecl)
 ;;;;
 ;;;; The third and last of the off-macOS checks, and the only one that runs the
 ;;;; program.  syntax-check asks whether src/ parses; compile-check asks whether
@@ -45,8 +46,15 @@
   ;; LOAD rather than COMPILE-FILE: the compiler's report is compile-check's
   ;; business and duplicating it here would only be noise.  The order is
   ;; lisp-listener.asd's, which is :SERIAL.
-  (dolist (name '("package" "main-thread" "queue" "listener" "view" "completion" "streams"
-                  "restarts" "repl" "window" "screenshot" "app"))
+  ;;
+  ;; The core, and the front end that runs on this Lisp: the Mac's on SBCL,
+  ;; iOS's on ECL.  Nothing here reaches either -- they are stubs all the way
+  ;; down -- but loading the one that ships on this Lisp keeps it honest.
+  (dolist (name (append '("package" "impl" "main-thread" "queue" "listener"
+                          "transcript" "completion" "streams" "restarts" "repl")
+                        #+sbcl '("macos/view" "macos/window" "macos/restarts-panel"
+                                 "macos/screenshot" "macos/app")
+                        #+ecl '("ios/view" "ios/restarts-sheet" "ios/app")))
     (load (merge-pathnames (format nil "src/~a.lisp" name) *root*)
           :external-format :utf-8)))
 
@@ -93,6 +101,46 @@ output stream's own segment list, newest first, each a (KIND . TEXT)."
   (sleep 0.05)
   (queue-push-string (listener-input listener) (format nil "~a~%" line))
   line)
+
+;;; An unbound variable, on either Lisp ------------------------------------------
+;;;
+;;; SBCL establishes CONTINUE, USE-VALUE and STORE-VALUE around an unbound
+;;; variable, in that order, in front of the listener's own ABORT -- which is
+;;; what several cases below are about.  ECL establishes none of them.  So on
+;;; ECL the variable is reached through MISSING-VALUE, which establishes the
+;;; same three, in the same order, with interactive functions that converse on
+;;; *QUERY-IO* the way SBCL's do -- ~& included, which is the point of the
+;;; cases that use them -- and then signals a real UNBOUND-VARIABLE.
+
+(defun missing-variable-source (name)
+  "Source text that reads the unbound variable NAME, a string."
+  #+sbcl (format nil "(symbol-value '~a)" name)
+  #-sbcl (format nil "(cl-user::missing-value '~a)" name))
+
+(defun missing-variable-form (symbol)
+  #+sbcl symbol
+  #-sbcl `(cl-user::missing-value ',symbol))
+
+#-sbcl
+(defun cl-user::read-evaluated-form ()
+  (format *query-io* "~&Enter a form to be evaluated: ")
+  (finish-output *query-io*)
+  (list (eval (read *query-io*))))
+
+#-sbcl
+(defun cl-user::missing-value (name)
+  (restart-case (error 'unbound-variable :name name)
+    (continue ()
+      :report (lambda (stream) (format stream "Retry using ~s." name))
+      (symbol-value name))
+    (use-value (value)
+      :report "Use specified value."
+      :interactive cl-user::read-evaluated-form
+      value)
+    (store-value (value)
+      :report "Set specified value and use it."
+      :interactive cl-user::read-evaluated-form
+      (setf (symbol-value name) value))))
 
 ;;; Reporting ------------------------------------------------------------------
 
@@ -147,7 +195,7 @@ inherited that would be testing the case before it."
 
 (defcase case-use-value
     "USE-VALUE: an interactive restart prompts, and its value is used."
-  (say listener "(symbol-value '*no-such-variable-at-all*)")
+  (say listener (missing-variable-source "*no-such-variable-at-all*"))
   (check-text listener "Restarts:" "an unbound variable enters the debugger")
   ;; The transcript's list marks the rows that will ask, as the panel's does.
   (check-text listener (format nil "Use specified value. …")
@@ -162,7 +210,7 @@ inherited that would be testing the case before it."
 
 (defcase case-store-value
     "STORE-VALUE: the other interactive restart on an unbound variable."
-  (say listener "(symbol-value '*another-missing-variable*)")
+  (say listener (missing-variable-source "*another-missing-variable*"))
   (check-text listener "Restarts:" "an unbound variable enters the debugger")
   (say listener "2")
   (check-text listener "Enter a form to be evaluated" "STORE-VALUE prompts")
@@ -193,7 +241,7 @@ inherited that would be testing the case before it."
   ;; Cancel assumed index 0 -- which it does not, it looks the restart up by
   ;; object -- Escape would have invoked `[CONTINUE] Retry using
   ;; *NO-SUCH-VARIABLE*' and spun, rather than returning to the top level.
-  (say listener "(symbol-value '*yet-another-missing*)")
+  (say listener (missing-variable-source "*yet-another-missing*"))
   (check-text listener "Restarts:" "the debugger is up")
   (let* ((text (transcript-so-far listener))
          (start (search "Restarts:" text))
@@ -228,7 +276,8 @@ exactly that."
     ;; for this error is the one that carries :INTERACTIVE READ-EVALUATED-FORM;
     ;; a USE-VALUE written here by hand would carry no interactive function and
     ;; the test would pass or fail for a reason having nothing to do with the
-    ;; panel.  PLAIN-RESTART, established around it, is the control.
+    ;; panel.  (On ECL, which has none, MISSING-VALUE's does carry one.)
+    ;; PLAIN-RESTART, established around it, is the control.
     (handler-bind
         ((unbound-variable
            (lambda (condition)
@@ -238,7 +287,7 @@ exactly that."
                      plain (find "[PLAIN-RESTART]" titles :test #'search)))
              (invoke-restart 'plain-restart))))
       (with-simple-restart (plain-restart "A restart that does not ask.")
-        (eval '*a-variable-that-is-not-bound*)))
+        (eval (missing-variable-form '*a-variable-that-is-not-bound*))))
     (check (and asking (search "…" asking))
            "USE-VALUE's label ends in an ellipsis")
     (check (and plain (not (search "…" plain)))
@@ -340,7 +389,11 @@ window belonging to a listener that had already gone."
     (check (null (symbol-completions "no-such-package:x" user))
            "an unknown package completes nothing")
     (check (= (symbol-token-start "(mapc #'fir") 8)
-           "the token stops at #' and parentheses"))
+           "the token stops at #' and parentheses")
+    (check (and (string= (common-prefix '("mapcan" "mapcar")) "mapca")
+                (string= (common-prefix '("car")) "car")
+                (string= (common-prefix '()) ""))
+           "without a popup, several candidates extend to what they share"))
   (say listener "(in-package :keyword)")
   (check-text listener "KEYWORD>" "the prompt follows IN-PACKAGE")
   (check (eq (listener-completion-package listener) (find-package "KEYWORD"))
@@ -371,4 +424,4 @@ window belonging to a listener that had already gone."
 
 (format t "~&~%headless-test: ~d check~:p, ~d failure~:p~%" *checks* *failures*)
 (finish-output)
-(sb-ext:exit :code (if (zerop *failures*) 0 1) :abort t)
+(exit-process (if (zerop *failures*) 0 1))

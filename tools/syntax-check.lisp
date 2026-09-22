@@ -45,6 +45,8 @@
       nil)))
 
 (let ((files (append (sorted-files "src/*.lisp")
+                     (sorted-files "src/macos/*.lisp")
+                     (sorted-files "src/ios/*.lisp")
                      (sorted-files "tools/*.lisp")
                      (sorted-files "*.asd"))))
   ;; "No offenders" is true of an empty scan, so the count is what makes the

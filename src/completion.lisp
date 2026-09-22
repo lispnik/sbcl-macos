@@ -1,17 +1,16 @@
 ;;;; src/completion.lisp -- Tab completes the symbol before the caret.
 ;;;;
-;;;; NSTextView already has completion: -complete: asks the view for the range
-;;;; being completed (-rangeForUserCompletion) and for the candidates
-;;;; (-completionsForPartialWordRange:indexOfSelectedItem:), then shows its own
-;;;; popup.  All this file supplies is Lisp's idea of both -- a symbol token
-;;;; rather than a word, which would stop at every hyphen and colon, and the
-;;;; symbols of the listener's package rather than a spelling dictionary.
+;;;; What this supplies is Lisp's idea of completion: a symbol token rather than
+;;;; a word, which would stop at every hyphen and colon, and the symbols of the
+;;;; listener's package rather than a spelling dictionary.
 ;;;;
 ;;;; The package is the one thing thread 1 cannot simply look at: *PACKAGE* is
 ;;;; bound on the listener thread.  EMIT-PROMPT publishes it into the listener
 ;;;; structure at every prompt, and LISTENER-COMPLETION-PACKAGE reads it back.
 ;;;;
-;;;; Everything above the IMPs is plain Lisp, and make test exercises it.
+;;;; All of it is plain Lisp, and make test exercises it.  How Tab reaches it is
+;;;; the front end's business: NSTextView's own completion popup on the Mac
+;;;; (src/macos/view.lisp), a key command and the key bar on iOS.
 
 (in-package #:lisp-listener)
 
@@ -101,41 +100,43 @@ Escape after a space would otherwise offer every symbol in the package."
       (objc:invoke pointer "scrollRangeToVisible:" (cons end 0))))
   string)
 
-;;; The Objective-C methods ---------------------------------------------------
+;;; Completing without a popup -----------------------------------------------
 ;;;
-;;; Tab goes to SUPER's -complete:, never to the view's own.  That override,
-;;; in restarts.lisp, is Escape's, and it first cancels any debugger level --
-;;; which Tab must not do.  Escape still completes, through its fall-through.
-;;;
-;;; One candidate is inserted straight away rather than offered in a popup of
-;;; one.  None, or several, go to -complete:, which beeps for none.
+;;; A toolkit with no completion popup of its own -- UIKit -- completes the way
+;;; a shell does: one candidate is inserted, several extend the token as far
+;;; as they agree, and when they agree no further the candidates are listed
+;;; above a fresh copy of the prompt.
 
-(define-listener-method ("insertTab:" :void)
-    ((sender objc:objc-object-pointer))
-  (multiple-value-bind (token range) (completion-token self pointer)
-    (let ((candidates (and token (listener-completions token))))
-      (cond ((null token)
-             (objc:invoke (objc:current-super) "insertTab:" sender))
-            ((and candidates (null (rest candidates)))
-             (replace-token pointer range (first candidates)))
+(defun common-prefix (strings)
+  "The longest prefix every one of STRINGS shares, compared exactly."
+  (if (null strings)
+      ""
+      (reduce (lambda (a b) (subseq a 0 (or (mismatch a b) (length a))))
+              strings)))
+
+(defun complete-at-caret (view pointer)
+  "Complete the symbol before the caret.  Thread 1.
+
+Returns :INSERTED, :EXTENDED, :LISTED, or NIL when there was nothing to
+complete or nothing it could be."
+  (multiple-value-bind (token range) (completion-token view pointer)
+    (let* ((candidates (and token (listener-completions token)))
+           (prefix (common-prefix candidates)))
+      (cond ((null candidates) nil)
+            ((null (rest candidates))
+             (replace-token pointer range (first candidates))
+             :inserted)
+            ((> (length prefix) (length token))
+             (replace-token pointer range prefix)
+             :extended)
             (t
-             (objc:invoke (objc:current-super) "complete:" sender))))))
+             (list-completions view candidates)
+             :listed)))))
 
-(define-listener-method ("rangeForUserCompletion" cocoa:ns-range) ()
-  (multiple-value-bind (token range) (completion-token self pointer)
-    (if token
-        range
-        (objc:invoke (objc:current-super) "rangeForUserCompletion"))))
-
-;;; The array is autoreleased: an object a Lisp method returns is the caller's
-;;; to release, and AppKit does not expect to own this one.  *INDEX is left at
-;;; AppKit's own default, which selects the first candidate.
-
-(define-listener-method ("completionsForPartialWordRange:indexOfSelectedItem:"
-                         objc:objc-object-pointer)
-    ((range cocoa:ns-range)
-     (index :pointer))
-  (let ((token (transcript-substring pointer (car range) (cdr range)))
-        (array (objc:invoke "NSMutableArray" "array")))
-    (dolist (candidate (listener-completions token) array)
-      (objc:invoke array "addObject:" candidate))))
+(defun list-completions (view candidates)
+  "Put CANDIDATES in the transcript, followed by the prompt again, above what
+is being typed -- which stays where it is and stays editable.  Thread 1."
+  (let ((prompt (and *listener* (listener-prompt *listener*))))
+    (transcript-insert view (format nil "~%~{~a~^  ~}~%" candidates) :note)
+    (when prompt
+      (transcript-insert view prompt :prompt))))

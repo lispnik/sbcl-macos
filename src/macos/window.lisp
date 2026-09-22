@@ -1,4 +1,4 @@
-;;;; src/window.lisp -- the window, the scroll view, and the menu.
+;;;; src/macos/window.lisp -- the window, the scroll view, and the menu.
 ;;;;
 ;;;; Thread 1 only, all of it.
 
@@ -60,6 +60,19 @@ A dynamic binding and not an assignment, and that is sound rather than lucky:
 -windowWillClose: is an IMP that AppKit calls on thread 1, from inside the
 -[NSApplication run] that RUN-LISTENER is blocked in, so it runs within the
 binding's extent.")
+
+(defun current-listener ()
+  "The listener a menu command means: the one whose window is key.
+
+A menu item's action arrives saying nothing about which window it was meant
+for, so the application has to be asked.  Falling back to *LISTENER* keeps the
+answer sensible while no window is key -- during startup, or when another
+application is in front."
+  (or (let ((key (ignore-errors
+                  (objc:invoke (objc.runloop:shared-application) "keyWindow"))))
+        (listener-for-window key))
+      *listener*
+      (first *listeners*)))
 
 (defparameter +ns-event-type-application-defined+ 15
   "NSEventTypeApplicationDefined.  An event AppKit has no meaning for, which

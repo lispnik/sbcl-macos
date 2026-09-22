@@ -1,6 +1,6 @@
-;;;; src/view.lisp -- LispListenerView, and the transcript underneath it.
+;;;; src/transcript.lisp -- the transcript, on either platform's text view.
 ;;;;
-;;;; One NSTextView holds the whole session: prompts, what you typed, what it
+;;;; One text view holds the whole session: prompts, what you typed, what it
 ;;;; printed and what it returned, interleaved, the way a terminal REPL reads.
 ;;;; The text above the prompt is not editable and the text below it is, and
 ;;;; the boundary between them is a single integer, INPUT-START.
@@ -11,19 +11,15 @@
 ;;;; output arriving from the listener thread (inserted ABOVE the pending
 ;;;; input, which is why TRANSCRIPT-INSERT exists at all), submitting a line,
 ;;;; and clearing the transcript.
+;;;;
+;;;; Everything here goes through -textStorage, -selectedRange,
+;;;; -scrollRangeToVisible: and -typingAttributes, which NSTextView and
+;;;; UITextView both have under those names, so it is shared by the two front
+;;;; ends.  The view CLASS is not: LISTENER-TEXT-VIEW, with the same slots, is
+;;;; defined over NSTextView in src/macos/view.lisp and over UITextView in
+;;;; src/ios/view.lisp, and each defines the methods its toolkit sends it.
 
 (in-package #:lisp-listener)
-
-;;; Cocoa constants -----------------------------------------------------------
-
-(defconstant +ns-view-width-and-height-sizable+ 18)
-(defconstant +ns-window-style-titled+ 1)
-(defconstant +ns-window-style-closable+ 2)
-(defconstant +ns-window-style-mask+ 15
-  "Titled, closable, miniaturizable, resizable.")
-(defconstant +ns-backing-store-buffered+ 2)
-(defconstant +png-file-type+ 4
-  "NSBitmapImageFileTypePNG, for -representationUsingType:properties:.")
 
 (defun %ns-string-constant (name)
   "The NSString an exported Objective-C string constant points at.
@@ -35,11 +31,12 @@ function appears twice under two names because everything that builds an
 attributed string needs it.
 
 The framework has to be open first: FOREIGN-SYMBOL-POINTER searches the images
-already loaded, and ENSURE-OBJC-INITIALIZED's :MODULES is what loads AppKit."
+already loaded.  On the Mac ENSURE-OBJC-INITIALIZED's :MODULES loads AppKit;
+on iOS UIKit is linked into the app."
   (let ((symbol (cffi:foreign-symbol-pointer name)))
     (unless symbol
       (error "lisp-listener: the Objective-C string constant ~a is not available. ~
-Was AppKit loaded?" name))
+Was AppKit or UIKit loaded?" name))
     (cffi:mem-ref symbol :pointer)))
 
 ;;; Text attributes -----------------------------------------------------------
@@ -57,14 +54,6 @@ Was AppKit loaded?" name))
   (clrhash *transcript-attributes*)
   (values))
 
-(defun transcript-color (kind)
-  (ecase kind
-    ((:output :input) (objc:invoke "NSColor" "textColor"))
-    (:prompt (objc:invoke "NSColor" "systemBlueColor"))
-    (:value (objc:invoke "NSColor" "systemGreenColor"))
-    (:error (objc:invoke "NSColor" "systemRedColor"))
-    (:note (objc:invoke "NSColor" "secondaryLabelColor"))))
-
 (defun transcript-attributes (kind)
   "The retained attributes dictionary for KIND.
 
@@ -74,8 +63,7 @@ NSMutableDictionary plus -setObject:forKey: rather than
   (or (gethash kind *transcript-attributes*)
       (setf (gethash kind *transcript-attributes*)
             (let ((attributes (objc:invoke "NSMutableDictionary" "dictionary"))
-                  (font (objc:invoke "NSFont" "monospacedSystemFontOfSize:weight:"
-                                     *font-size* 0d0)))
+                  (font (transcript-font *font-size*)))
               (objc:invoke attributes "setObject:forKey:"
                            font (%ns-string-constant "NSFontAttributeName"))
               (objc:invoke attributes "setObject:forKey:"
@@ -83,20 +71,6 @@ NSMutableDictionary plus -setObject:forKey: rather than
                            (%ns-string-constant "NSForegroundColorAttributeName"))
               ;; +dictionary is autoreleased and this one outlives the pool.
               (objc:retain attributes)))))
-
-;;; The view ------------------------------------------------------------------
-
-(objc:define-objc-class listener-text-view ()
-  ((input-start :initform 0 :accessor view-input-start
-                :documentation "Index in the text storage where editable text
-begins.  UTF-16 units, thread 1 only.")
-   (history :initform '() :accessor view-history
-            :documentation "Submitted lines, newest first.")
-   (history-index :initform nil :accessor view-history-index
-                  :documentation "How far back RECALL-HISTORY has gone, or NIL
-while a fresh line is being typed."))
-  (:objc-class-name "LispListenerView")
-  (:objc-superclass-name "NSTextView"))
 
 ;;; Transcript primitives -----------------------------------------------------
 ;;; All of these are thread 1 only, and all index arithmetic is done on values
@@ -137,11 +111,19 @@ is where it belongs and where a terminal puts it."
   (when (plusp (length string))
     (let* ((storage (transcript-storage view))
            (attributed (make-attributed-string string kind))
-           (length (objc:invoke attributed "length")))
-      (objc:invoke storage "insertAttributedString:atIndex:"
-                   attributed (view-input-start view))
+           (length (objc:invoke attributed "length"))
+           (at (view-input-start view))
+           (pointer (objc:objc-object-pointer view))
+           (caret (caret-index pointer)))
+      (objc:invoke storage "insertAttributedString:atIndex:" attributed at)
       (objc:release attributed)
-      (incf (view-input-start view) length)))
+      (incf (view-input-start view) length)
+      ;; A caret in the input region has to move with it.  NSTextView carries
+      ;; a caret at the insertion point along by itself; UITextView leaves it
+      ;; where it was -- in front of the output, on the line the user was not
+      ;; typing on.  So it is moved here only if the toolkit did not.
+      (when (and caret (>= caret at) (eql (caret-index pointer) caret))
+        (objc:invoke pointer "setSelectedRange:" (cons (+ caret length) 0)))))
   string)
 
 (defun transcript-append (view string kind)
@@ -290,9 +272,9 @@ which is what multi-line input needs."
            (replace-pending-input view pointer (nth index history))
            t))))))
 
-;;; The Objective-C methods ---------------------------------------------------
+;;; Defining the Objective-C methods --------------------------------------------
 ;;;
-;;; A Lisp condition must never unwind into an AppKit frame: there is no
+;;; A Lisp condition must never unwind into an AppKit or UIKit frame: there is no
 ;;; handler on the Objective-C side and the unwind aborts the process.  So
 ;;; every body below is wrapped, and the wrapper is a macro rather than a
 ;;; convention, because a convention gets forgotten exactly once.
@@ -316,42 +298,11 @@ POINTER to its Objective-C pointer; BODY may not unwind."
          (note "~a: ~a" ,selector condition)
          ,on-error))))
 
-(define-listener-method ("listenerDrainQueue" :void) ()
-  (drain-main-thread-queue))
+(defun input-edit-allowed-p (view range)
+  "Whether an edit of RANGE, a (location . length) cons, may go ahead: only in
+the input region.  Both front ends' should-change delegate methods answer this.
 
-(define-listener-method ("insertNewline:" :void)
-    ((sender objc:objc-object-pointer))
-  (submit-input self pointer))
-
-(define-listener-method ("moveUp:" :void)
-    ((sender objc:objc-object-pointer))
-  (unless (and (caret-on-first-input-line-p self pointer)
-               (recall-history self pointer -1))
-    (objc:invoke (objc:current-super) "moveUp:" sender)))
-
-(define-listener-method ("moveDown:" :void)
-    ((sender objc:objc-object-pointer))
-  (unless (and (caret-on-last-input-line-p self pointer)
-               (recall-history self pointer 1))
-    (objc:invoke (objc:current-super) "moveDown:" sender)))
-
-;;; The view is its own delegate.  AppKit dispatches a delegate method through
-;;; -respondsToSelector:, which a real class_addMethod'd IMP satisfies, so
-;;; there is nothing to declare and no second object to keep alive.
-;;;
-;;; The affected range arrives as a CONS (location . length): NSRange is the
-;;; one Cocoa structure this bridge represents as a cons rather than a vector,
-;;; which is the LispWorks manual's inconsistency and is load bearing.
-;;;
-;;; On an error the edit is ALLOWED.  Refusing by default would make a bug in
-;;; here look like a text view that has stopped accepting typing.
-
-(define-listener-method ("textView:shouldChangeTextInRange:replacementString:"
-                         objc:objc-bool :on-error t)
-    ((text-view objc:objc-object-pointer)
-     (affected cocoa:ns-range)
-     (replacement objc:objc-object-pointer))
-  (>= (car affected) (view-input-start self)))
-
-(define-listener-method ("acceptsFirstResponder" objc:objc-bool :on-error t) ()
-  t)
+The range arrives as a CONS: NSRange is the one Cocoa structure the bridge
+represents as a cons rather than a vector, which is the LispWorks manual's
+inconsistency and is load bearing."
+  (>= (car range) (view-input-start view)))

@@ -8,6 +8,9 @@
 # the streams, the reader, the debugger and the interactive restarts; it covers
 # nothing with a window in it, which is macos.yml's job.
 #
+# The listener is run twice: on SBCL, which the Mac app ships on, and on ECL,
+# which the iOS app ships on.  Both compile passes run too, one per front end.
+#
 # It is here as its own workflow, and on ubuntu, because it answers in seconds
 # and should not be queued behind a macOS runner or a three-minute SBCL build.
 
@@ -26,11 +29,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install SBCL
-        run: sudo apt-get update && sudo apt-get install -y sbcl
+      - name: Install SBCL and ECL
+        run: sudo apt-get update && sudo apt-get install -y sbcl ecl
 
       - name: Report the environment
-        run: sbcl --version
+        run: |
+          sbcl --version
+          ecl --version
 
       - name: Check
         run: make check

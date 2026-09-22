@@ -8,21 +8,10 @@
 ;;;;
 ;;;; This is lem-cocoa's main-thread.lisp, which is the worked version of the
 ;;;; pattern, including the one measurement that is easy to get wrong -- see
-;;;; +COMMON-RUN-LOOP-MODES+.
+;;;; the front end's MAIN-THREAD-RUN-LOOP-MODES.  Everything here is Foundation,
+;;;; so it is the same on AppKit and UIKit; only the list of modes differs.
 
 (in-package #:lisp-listener)
-
-(defparameter +common-run-loop-modes+
-  #("NSDefaultRunLoopMode" "NSEventTrackingRunLoopMode" "NSModalPanelRunLoopMode")
-  "The run loop modes a queued selector is delivered in: the default one, and
-the ones the main thread runs while a window is being resized or a panel is up,
-so a request made then still arrives.
-
-Named one by one rather than as the common-modes pseudo mode.  Measured in
-lem-cocoa: a perform queued in the mode named kCFRunLoopCommonModes from a Lisp
-thread never ran, and every perform queued after it stayed behind it.
-
-A Lisp vector; INVOKE converts it to an NSArray of NSStrings on the way in.")
 
 (defvar *main-thread-queue* '()
   "Closures waiting to run on the main thread, newest first.")
@@ -69,7 +58,7 @@ closures would deadlock the first time one of them wanted to queue more work."
   (objc:invoke *main-thread-target*
                "performSelectorOnMainThread:withObject:waitUntilDone:modes:"
                (objc:coerce-to-selector "listenerDrainQueue")
-               nil wait +common-run-loop-modes+))
+               nil wait (main-thread-run-loop-modes)))
 
 (defun call-on-main-thread (function &key wait)
   "Run FUNCTION on the main thread.  With WAIT, block until it has run and
@@ -77,7 +66,7 @@ return its values; without -- the default, and what everything here uses --
 return at once.
 
 WAIT defaults to NIL deliberately.  A synchronous hop only lands if the main
-thread is already in a run loop in one of +COMMON-RUN-LOOP-MODES+; during
+thread is already in a run loop in one of MAIN-THREAD-RUN-LOOP-MODES; during
 startup, or while the main thread is inside Lisp of our own, it would wait
 with no error and nothing to see.
 

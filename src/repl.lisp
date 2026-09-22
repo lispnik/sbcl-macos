@@ -94,7 +94,7 @@ is almost always this program rather than yours.")
 (defun frame-line (frame)
   "One frame, on one line.
 
-SB-DEBUG hands back the call as a form, and left to itself the pretty printer
+A frame comes back as a call form, and left to itself the pretty printer
 spreads a wide one over five lines, which turns a twelve-frame backtrace into a
 page.  Depth and length are capped instead, the way a debugger caps them."
   (let ((*print-pretty* nil)
@@ -133,15 +133,14 @@ every error."
 CAPTURED HERE, inside the hook, because here is the only place the stack still
 exists: by the time a restart has been chosen it has been unwound.
 
-:FROM :DEBUGGER-FRAME is what SBCL's own debugger uses and is what makes the
-result readable -- it starts at the frame that signalled and skips
-INVOKE-DEBUGGER, RUN-HOOK and this hook itself, which are ours and are never
-what anyone wants to see first.  A few extra frames are asked for because
-TRIM-LISTENER-FRAMES may drop some."
+BACKTRACE-FRAMES starts at the frame that signalled and skips INVOKE-DEBUGGER,
+the hooks and this function, which are ours and are never what anyone wants to
+see first.  A few extra frames are asked for because TRIM-LISTENER-FRAMES may
+drop some."
   (handler-case
       ;; Trimmed as FRAMES and printed afterwards: the decision is about which
       ;; function a frame is, which only the frame itself can answer.
-      (let* ((raw (sb-debug:list-backtrace :count (+ count 8) :from :debugger-frame))
+      (let* ((raw (backtrace-frames (+ count 8)))
              (frames (trim-listener-frames raw count)))
         (loop for frame in frames
               for index from 0
@@ -196,7 +195,7 @@ A number picks a restart, anything else is evaluated here, so a debugger level
 is a working listener too.
 
 THIS MUST NOT RETURN.  If *DEBUGGER-HOOK* returns, INVOKE-DEBUGGER falls
-through to SBCL's own debugger, which would then try to converse on *DEBUG-IO*
+through to the Lisp's own debugger, which would then try to converse on *DEBUG-IO*
 -- this same window -- from underneath us.  Every path out of here either
 transfers control through a restart or aborts to the top level."
   (let ((stream (listener-output listener))
@@ -275,13 +274,16 @@ window, so STORE-VALUE and USE-VALUE ask there rather than nowhere."
   (let ((stream (listener-output listener)))
     (with-output-kind (stream :note)
       (format stream "~a ~a~%" (lisp-implementation-type) (lisp-implementation-version))
-      (if (safepoint-build-p)
-          (format stream "Safepoint build: callbacks on libdispatch threads are safe.~%")
-          (format stream "WARNING: this SBCL is not a --with-sb-safepoint build.~@
-                          A garbage collection while two libdispatch worker threads are~@
-                          inside Lisp takes the process down with no condition and no~@
-                          backtrace.  AppKit reaches libdispatch on its own.  See~@
-                          lispnik/objc doc/sbcl-libdispatch-safepoint.md.~%"))))
+      (cond
+        ((not (member :sbcl *features*)))
+        ((safepoint-build-p)
+         (format stream "Safepoint build: callbacks on libdispatch threads are safe.~%"))
+        (t
+         (format stream "WARNING: this SBCL is not a --with-sb-safepoint build.~@
+                         A garbage collection while two libdispatch worker threads are~@
+                         inside Lisp takes the process down with no condition and no~@
+                         backtrace.  AppKit reaches libdispatch on its own.  See~@
+                         lispnik/objc doc/sbcl-libdispatch-safepoint.md.~%")))))
   (values))
 
 (defun listener-rep (listener)
@@ -325,43 +327,43 @@ Errors go to the debugger hook, not to here."
           (*debug-io* io)
           (*terminal-io* io)
           (*package* (find-package "COMMON-LISP-USER"))
-          ;; BOTH hooks, and that is not belt and braces.  SBCL's
-          ;; INVOKE-DEBUGGER sets *DEBUGGER-HOOK* to NIL before calling it, so
-          ;; that a hook which itself errors cannot loop -- which means a
-          ;; nested error, raised while the debugger is already up, finds
-          ;; *DEBUGGER-HOOK* empty.  SB-EXT:*INVOKE-DEBUGGER-HOOK* is not
+          ;; BOTH hooks, and that is not belt and braces.  INVOKE-DEBUGGER sets
+          ;; *DEBUGGER-HOOK* to NIL before calling it, so that a hook which
+          ;; itself errors cannot loop -- which means a nested error, raised
+          ;; while the debugger is already up, finds *DEBUGGER-HOOK* empty.
+          ;; The implementation's own hook (WITH-INVOKE-DEBUGGER-HOOK) is not
           ;; nulled, so it is what catches the nested one.  Bind only the
           ;; standard hook and debugger levels below the first fall through to
-          ;; SBCL's own debugger, on *DEBUG-IO*, which is this window.
+          ;; the Lisp's own debugger, on *DEBUG-IO*, which is this window.
           ;;
-          ;; Measured rather than assumed: with both bound, an error raised
-          ;; from inside the hook came back reporting `*debugger-hook* is now
-          ;; NIL' and was handled anyway.
-          (*debugger-hook* debugger)
-          (sb-ext:*invoke-debugger-hook* debugger))
-      (print-banner listener)
-      (loop
-        ;; The only ABORT restart in the whole listener, so that aborting from
-        ;; any depth -- a nested debugger level, a form interrupted by the
-        ;; Interrupt menu item -- lands here and nowhere in between.
-        ;;
-        ;; LIVE starts true, so an abort that unwinds past the SETF leaves it
-        ;; true and the loop goes round again; only a clean NIL from
-        ;; LISTENER-REP, which means end of input, stops it.
-        (let ((live t))
-          ;; WITH-SIMPLE-RESTART answers (VALUES NIL T) when its restart was
-          ;; taken, which is how the loop can tell "the form finished" from
-          ;; "the form was abandoned" -- and it is worth telling, because
-          ;; otherwise an interrupt leaves no trace at all.
-          (multiple-value-bind (ignored aborted)
-              (with-simple-restart (abort "Return to the listener's top level.")
-                ;; FIND-RESTART inside the form finds the innermost ABORT,
-                ;; which is the one just established.
-                (let ((*toplevel-restart* (find-restart 'abort)))
-                  (setf live (listener-rep listener))))
-            (declare (ignore ignored))
-            (when aborted (note-abort listener)))
-          (unless live (return)))))))
+          ;; Measured rather than assumed, on SBCL: with both bound, an error
+          ;; raised from inside the hook came back reporting `*debugger-hook*
+          ;; is now NIL' and was handled anyway.
+          (*debugger-hook* debugger))
+      (with-invoke-debugger-hook (debugger)
+       (print-banner listener)
+       (loop
+         ;; The only ABORT restart in the whole listener, so that aborting from
+         ;; any depth -- a nested debugger level, a form interrupted by the
+         ;; Interrupt menu item -- lands here and nowhere in between.
+         ;;
+         ;; LIVE starts true, so an abort that unwinds past the SETF leaves it
+         ;; true and the loop goes round again; only a clean NIL from
+         ;; LISTENER-REP, which means end of input, stops it.
+         (let ((live t))
+           ;; WITH-SIMPLE-RESTART answers (VALUES NIL T) when its restart was
+           ;; taken, which is how the loop can tell "the form finished" from
+           ;; "the form was abandoned" -- and it is worth telling, because
+           ;; otherwise an interrupt leaves no trace at all.
+           (multiple-value-bind (ignored aborted)
+               (with-simple-restart (abort "Return to the listener's top level.")
+                 ;; FIND-RESTART inside the form finds the innermost ABORT,
+                 ;; which is the one just established.
+                 (let ((*toplevel-restart* (find-restart 'abort)))
+                   (setf live (listener-rep listener))))
+             (declare (ignore ignored))
+             (when aborted (note-abort listener)))
+           (unless live (return))))))))
 
 (defun note-abort (listener)
   "Say that the last form was abandoned.

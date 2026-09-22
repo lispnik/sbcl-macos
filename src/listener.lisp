@@ -92,33 +92,27 @@ Compared with EQL, which works where pointer comparison does not: the bridge
 hands an IMP the same Lisp object every time."
   (and object (find object *listeners* :key #'listener-view-object)))
 
-(defun current-listener ()
-  "The listener a menu command means: the one whose window is key.
+(defun warm-selectors (listener)
+  "Send, from thread 1, every selector the listener thread will later send.
 
-A menu item's action arrives saying nothing about which window it was meant
-for, so the application has to be asked.  Falling back to *LISTENER* keeps the
-answer sensible while no window is key -- during startup, or when another
-application is in front."
-  (or (let ((key (ignore-errors
-                  (objc:invoke (objc.runloop:shared-application) "keyWindow"))))
-        (listener-for-window key))
-      *listener*
-      (first *listeners*)))
+The bridge's selector, class and trampoline caches are plain hash tables with
+no lock -- fast, and fine in practice, but a PUTHASH racing a rehash is
+formally undefined.  The listener thread only ever sends one message of its
+own, the -performSelectorOnMainThread: hop, so priming that one here costs a
+single call and removes the question."
+  (objc:coerce-to-selector "listenerDrainQueue")
+  (objc:coerce-to-selector "performSelectorOnMainThread:withObject:waitUntilDone:modes:")
+  (let ((view (listener-view listener)))
+    (when view
+      (objc:invoke view "performSelectorOnMainThread:withObject:waitUntilDone:modes:"
+                   (objc:coerce-to-selector "listenerDrainQueue")
+                   nil nil (main-thread-run-loop-modes))))
+  listener)
 
 (defun listener-completion-package (listener)
   "The package a symbol typed into LISTENER is read in, as far as thread 1 knows."
   (or (and listener (listener-package listener))
       (find-package "COMMON-LISP-USER")))
-
-(defun safepoint-build-p ()
-  "True on an SBCL built --with-sb-safepoint.
-
-Such a build stops the world by polling rather than by signalling, which is
-what makes it safe for Lisp to run on a thread Darwin will not let anyone
-signal -- a libdispatch worker.  AppKit reaches libdispatch on its own, so a
-Cocoa application wants one whether or not it uses GCD itself.  See
-lispnik/objc's doc/sbcl-libdispatch-safepoint.md."
-  (and (member :sb-safepoint *features*) t))
 
 (defun report-condition (condition)
   "CONDITION's report as a string, even when the report itself signals.

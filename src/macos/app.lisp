@@ -1,4 +1,4 @@
-;;;; src/app.lisp -- the application: menus, delegate, entry points, self-test.
+;;;; src/macos/app.lisp -- the application: menus, delegate, entry points, self-test.
 ;;;;
 ;;;; Everything foreign is made HERE, at run time, and nothing is stashed in a
 ;;;; defvar at load time.  The bundle's image is a dumped core: lispnik/objc
@@ -99,23 +99,6 @@ with NIL and builds a fresh one.")
   (not *stop-run-loop-on-last-close*))
 
 ;;; Building it ---------------------------------------------------------------
-
-(defun warm-selectors (listener)
-  "Send, from thread 1, every selector the listener thread will later send.
-
-The bridge's selector, class and trampoline caches are plain hash tables with
-no lock -- fast, and fine in practice, but a PUTHASH racing a rehash is
-formally undefined.  The listener thread only ever sends one message of its
-own, the -performSelectorOnMainThread: hop, so priming that one here costs a
-single call and removes the question."
-  (objc:coerce-to-selector "listenerDrainQueue")
-  (objc:coerce-to-selector "performSelectorOnMainThread:withObject:waitUntilDone:modes:")
-  (let ((view (listener-view listener)))
-    (when view
-      (objc:invoke view "performSelectorOnMainThread:withObject:waitUntilDone:modes:"
-                   (objc:coerce-to-selector "listenerDrainQueue")
-                   nil nil +common-run-loop-modes+)))
-  listener)
 
 (defun build-listener (&key (title "Lisp Listener") (activation-policy 0))
   "Bring Cocoa up and make the listener.  Main thread only; returns it.
@@ -287,7 +270,7 @@ to meet it is an automated one."
   (unless (objc.runloop:window-server-p)
     (note "there is no window server, so there is nowhere to put a listener.")
     (ignore-errors (finish-output *log*))
-    (sb-ext:exit :code 2 :abort t)))
+    (exit-process 2)))
 
 (defun run-listener (&key (title "Lisp Listener"))
   "Start a listener from a plain SBCL REPL, on thread 1, and return when the

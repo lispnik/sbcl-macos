@@ -6,7 +6,8 @@
 ;;;; window, and what lets INVOKE-RESTART-INTERACTIVELY ask its question there
 ;;;; when you pick a restart that needs a value.
 ;;;;
-;;;; SB-GRAY rather than trivial-gray-streams: this repository is sbcl-macos.
+;;;; The implementation's own Gray streams (SB-GRAY, or ECL's GRAY) rather than
+;;;; trivial-gray-streams: package.lisp names whichever it is GRAY-STREAMS.
 ;;;;
 ;;;; ONE RULE, and the deadlock is real if it is broken: the buffer lock is
 ;;;; never held across a hop to the main thread, and the hop is never made with
@@ -17,7 +18,7 @@
 
 ;;; Output --------------------------------------------------------------------
 
-(defclass listener-output-stream (sb-gray:fundamental-character-output-stream)
+(defclass listener-output-stream (gray-streams:fundamental-character-output-stream)
   ((listener :initarg :listener :reader stream-listener)
    (lock :initform (bt:make-lock "lisp-listener output") :reader stream-lock)
    (segments :initform '() :accessor stream-segments
@@ -102,16 +103,16 @@ already pending and do nothing."
                    (append (reverse segments) (stream-segments stream)))))))))
   nil)
 
-(defmethod sb-gray:stream-write-char ((stream listener-output-stream) character)
+(defmethod gray-streams:stream-write-char ((stream listener-output-stream) character)
   (%stream-emit stream (string character))
   character)
 
-(defmethod sb-gray:stream-write-string ((stream listener-output-stream) string
+(defmethod gray-streams:stream-write-string ((stream listener-output-stream) string
                                         &optional (start 0) end)
   (%stream-emit stream (subseq string start end))
   string)
 
-(defmethod sb-gray:stream-line-column ((stream listener-output-stream))
+(defmethod gray-streams:stream-line-column ((stream listener-output-stream))
   (stream-column stream))
 
 (defparameter *transcript-line-length* 100
@@ -134,14 +135,14 @@ rather than conditional ones.  That is what SBCL's own REPL shows too, so the
 transcript is being faithful rather than broken.  Measured, after assuming
 otherwise and being wrong.")
 
-(defmethod sb-gray:stream-line-length ((stream listener-output-stream))
+(defmethod gray-streams:stream-line-length ((stream listener-output-stream))
   *transcript-line-length*)
 
-(defmethod sb-gray:stream-force-output ((stream listener-output-stream))
+(defmethod gray-streams:stream-force-output ((stream listener-output-stream))
   (schedule-flush stream)
   nil)
 
-(defmethod sb-gray:stream-finish-output ((stream listener-output-stream))
+(defmethod gray-streams:stream-finish-output ((stream listener-output-stream))
   ;; Scheduled, not waited for.  FINISH-OUTPUT's contract is that the data has
   ;; been handed on, and waiting for thread 1 here is the deadlock this file's
   ;; header is about.
@@ -160,32 +161,32 @@ locked, because only one thread ever sets it."
 
 ;;; Input ---------------------------------------------------------------------
 
-(defclass listener-input-stream (sb-gray:fundamental-character-input-stream)
+(defclass listener-input-stream (gray-streams:fundamental-character-input-stream)
   ((listener :initarg :listener :reader stream-listener))
   (:documentation "A character stream fed by the view, one submitted line at a
 time.  READ blocks on it, which is exactly what makes an incomplete form work:
 no new prompt appears and the user carries on typing."))
 
-(defmethod sb-gray:stream-read-char ((stream listener-input-stream))
+(defmethod gray-streams:stream-read-char ((stream listener-input-stream))
   (or (queue-read-char (listener-input (stream-listener stream)))
       :eof))
 
-(defmethod sb-gray:stream-unread-char ((stream listener-input-stream) character)
+(defmethod gray-streams:stream-unread-char ((stream listener-input-stream) character)
   (queue-unread-char (listener-input (stream-listener stream)) character)
   nil)
 
-(defmethod sb-gray:stream-listen ((stream listener-input-stream))
+(defmethod gray-streams:stream-listen ((stream listener-input-stream))
   (queue-listen (listener-input (stream-listener stream))))
 
-(defmethod sb-gray:stream-read-char-no-hang ((stream listener-input-stream))
+(defmethod gray-streams:stream-read-char-no-hang ((stream listener-input-stream))
   (when (queue-listen (listener-input (stream-listener stream)))
-    (sb-gray:stream-read-char stream)))
+    (gray-streams:stream-read-char stream)))
 
-(defmethod sb-gray:stream-clear-input ((stream listener-input-stream))
+(defmethod gray-streams:stream-clear-input ((stream listener-input-stream))
   (queue-clear (listener-input (stream-listener stream)))
   nil)
 
-(defmethod sb-gray:stream-line-column ((stream listener-input-stream))
+(defmethod gray-streams:stream-line-column ((stream listener-input-stream))
   "NIL: this stream does not track a column.
 
 A line-column method on an INPUT stream looks like dead code and is not.
