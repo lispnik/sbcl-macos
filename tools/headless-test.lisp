@@ -233,6 +233,34 @@ inherited that would be testing the case before it."
   (say listener "(+ 40 2)")
   (check-text listener "42" "the listener evaluates again afterwards"))
 
+(defcase case-nested-debugger
+    "An error AT a debugger prompt opens the next level, not the top level."
+  ;; A regression test.  Every evaluation at a debugger prompt ran inside the
+  ;; hook's HANDLER-CASE, which handled the error, so a mistake typed at [1]
+  ;; quietly dropped the listener back to CL-USER> and said so only in the log.
+  (let ((log (make-string-output-stream)))
+    (setf *log* log)
+    (unwind-protect
+         (progn
+           (say listener "(error \"first\")")
+           (check-text listener "[1] CL-USER>" "the first error opens level 1")
+           (say listener "(error \"second\")")
+           (check-text listener "[2] CL-USER>" "an error at [1] opens level 2")
+           (say listener "(car 7)")
+           (check-text listener "[3] CL-USER>" "and one at [2] opens level 3")
+           (say listener "(+ 20 22)")
+           (check-text listener "42" "the deepest level still evaluates")
+           (check (not (search "; Aborted." (transcript-so-far listener)))
+                  "nothing was aborted on the way down")
+           ;; Restart 0 at every level here is the listener's own ABORT.
+           (say listener "0")
+           (check-text listener (format nil "; Aborted.~%CL-USER>")
+                       "its ABORT goes all the way back to the top level")
+           (check (not (search "the debugger itself failed"
+                               (get-output-stream-string log)))
+                  "and the debugger never reported failing"))
+      (setf *log* nil))))
+
 (defcase case-toplevel-restart-index
     "The toplevel restart is NOT index 0 -- Cancel must find it by object."
   ;; A regression test for a decision, not for a line.  On an unbound variable
@@ -416,7 +444,8 @@ window belonging to a listener that had already gone."
 ;;; ----------------------------------------------------------------------------
 
 (dolist (case '(case-session case-debugger case-use-value case-store-value
-                case-y-or-n-p case-abort case-toplevel-restart-index
+                case-y-or-n-p case-abort case-nested-debugger
+                case-toplevel-restart-index
                 case-interactive-restarts-are-marked
                 case-two-listeners case-nil-is-nobody case-completion
                 case-prompt-is-recorded))

@@ -76,6 +76,16 @@ SETF is sequential, so oldest first is not a stylistic choice."
 
 ;;; The debugger --------------------------------------------------------------
 
+(defvar *listener-debugger-hook* nil
+  "The listener's debugger hook, bound by LISTENER-LOOP for each debugger level
+to bind again.
+
+INVOKE-DEBUGGER nulls the hook it calls while that hook runs -- CL's
+*DEBUGGER-HOOK*, and the implementation's own one too -- so that a failing hook
+cannot loop.  Each level down used one of the two up, and the third fell through
+to the Lisp's own debugger, which cannot converse in this window.  So every
+level puts both back for the levels below it.")
+
 (defvar *toplevel-restart* nil
   "The ABORT restart that returns to the listener's top level.
 
@@ -214,35 +224,51 @@ transfers control through a restart or aborts to the top level."
                       (position *toplevel-restart* restarts)))
     (drain-pending-whitespace *standard-input*)
     (setf (listener-debug-level listener) (1+ saved))
-    ;; No ABORT restart is established here on purpose.  Aborting means "back to
-    ;; the top level", from however deep, so CL:ABORT should find the toplevel
-    ;; one and not a nearer one of ours -- and a nearer one is also how the EOF
-    ;; case below used to spin: (abort) invoked the restart established by this
-    ;; very iteration, the loop went round, and READ-LINE returned NIL again.
-    (unwind-protect
-         (loop
-           (emit-prompt listener)
-           (let ((line (read-line *standard-input* nil nil)))
-             (setf (listener-prompt listener) nil)
-             ;; End of input: the window has gone and nothing can ever be read
-             ;; again.  Leave, and let the abort below unwind to the top level.
-             (when (null line) (return))
-             (let ((selection (restart-selection line (length restarts))))
-               (cond
-                 (selection (take-restart (nth selection restarts)))
-                 (t
-                  ;; READ-FROM-STRING on a blank line signals END-OF-FILE, which
-                  ;; would reach the hook and open a further debugger level --
-                  ;; so pressing Return at a debugger prompt would descend a
-                  ;; level each time.  Nothing typed, nothing to do.
-                  (multiple-value-bind (form position)
-                      (read-from-string line nil +eof+)
-                    (declare (ignore position))
-                    (unless (eq form +eof+)
-                      (print-values listener
-                                    (multiple-value-list (eval form))))))))))
-      (setf (listener-debug-level listener) saved)
-      (withdraw-restarts listener))
+    ;; Both hooks, again, for the levels below this one; see
+    ;; *LISTENER-DEBUGGER-HOOK*.
+    (let ((*debugger-hook* *listener-debugger-hook*))
+     (with-invoke-debugger-hook (*listener-debugger-hook*)
+      ;; No ABORT restart is established here on purpose.  Aborting means "back to
+      ;; the top level", from however deep, so CL:ABORT should find the toplevel
+      ;; one and not a nearer one of ours -- and a nearer one is also how the EOF
+      ;; case below used to spin: (abort) invoked the restart established by this
+      ;; very iteration, the loop went round, and READ-LINE returned NIL again.
+      (unwind-protect
+           (loop
+             (emit-prompt listener)
+             (let ((line (read-line *standard-input* nil nil)))
+               (setf (listener-prompt listener) nil)
+               ;; End of input: the window has gone and nothing can ever be read
+               ;; again.  Leave, and let the abort below unwind to the top level.
+               (when (null line) (return))
+               (let ((selection (restart-selection line (length restarts))))
+                 ;; An error in what is evaluated HERE opens the next level down,
+                 ;; exactly as one at the top level opens this one.  It has to be
+                 ;; sent there by hand: this whole function runs inside the
+                 ;; HANDLER-CASE in LISTENER-LOOP's hook, whose handler for ERROR
+                 ;; would otherwise HANDLE it -- a handled condition never reaches
+                 ;; INVOKE-DEBUGGER -- and take the listener silently back to the
+                 ;; top level, saying only `the debugger itself failed' in the log.
+                 ;; So no debugger level below the first ever opened.  Bound here,
+                 ;; innermost, so the evaluated code's own handlers still come
+                 ;; first, and around TAKE-RESTART too, whose interactive function
+                 ;; reads and evaluates a form of its own.
+                 (handler-bind ((error #'invoke-debugger))
+                   (cond
+                     (selection (take-restart (nth selection restarts)))
+                     (t
+                      ;; READ-FROM-STRING on a blank line signals END-OF-FILE, which
+                      ;; would reach the hook and open a further debugger level --
+                      ;; so pressing Return at a debugger prompt would descend a
+                      ;; level each time.  Nothing typed, nothing to do.
+                      (multiple-value-bind (form position)
+                          (read-from-string line nil +eof+)
+                        (declare (ignore position))
+                        (unless (eq form +eof+)
+                          (print-values listener
+                                        (multiple-value-list (eval form)))))))))))
+        (setf (listener-debug-level listener) saved)
+        (withdraw-restarts listener))))
     ;; THIS MUST NOT RETURN; see the docstring.  Reached only on end of input.
     (ignore-errors (abort))
     (note "the listener's input ended inside the debugger.")))
@@ -339,7 +365,12 @@ Errors go to the debugger hook, not to here."
           ;; Measured rather than assumed, on SBCL: with both bound, an error
           ;; raised from inside the hook came back reporting `*debugger-hook*
           ;; is now NIL' and was handled anyway.
-          (*debugger-hook* debugger))
+          ;;
+          ;; Both are nulled in turn, one per level, so two hooks alone reach
+          ;; only two levels; LISTENER-DEBUGGER binds both again for the
+          ;; levels below it, from *LISTENER-DEBUGGER-HOOK*.
+          (*debugger-hook* debugger)
+          (*listener-debugger-hook* debugger))
       (with-invoke-debugger-hook (debugger)
        (print-banner listener)
        (loop

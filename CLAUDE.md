@@ -236,9 +236,18 @@ Each of these is a bug that actually happened here.
   exactly that shape; **the entire debugger was dead code and nothing said so**,
   until the first CI screenshot that reached it.
 
-- **Bind both `cl:*debugger-hook*` and `sb-ext:*invoke-debugger-hook*`.** SBCL
-  nulls the former before calling it, so a nested error inside the debugger
-  reaches only the latter.
+- **Bind both `cl:*debugger-hook*` and `sb-ext:*invoke-debugger-hook*`** (ECL:
+  `ext:`), **and bind them again at every debugger level.** `invoke-debugger`
+  nulls whichever hook it calls while it runs, so each level down uses one up:
+  with the two bound once, level 3 fell through to the Lisp's own debugger.
+  `listener-debugger` rebinds both from `*listener-debugger-hook*`.
+
+- **An error evaluated at a debugger prompt must be sent to `invoke-debugger`
+  by hand.** All of `listener-debugger` runs inside the hook's `handler-case`,
+  which would otherwise handle it. That is the same trap as `handler-case` around
+  `listener-loop`, one level down: every error typed at `[1]` silently returned
+  to `CL-USER>`, and no level below the first ever opened. The `handler-bind`
+  around the debugger's evaluation does this; `case-nested-debugger` covers it.
 
 - **`fresh-line` on a two-way stream asks the INPUT half for its column.** So
   `listener-input-stream` needs a `stream-line-column` method although it
