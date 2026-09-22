@@ -27,6 +27,10 @@
 
   :bundle-identifier "org.lispnik.sbcl-macos.lisp-listener"
   :bundle-name "Lisp Listener"
+  ;; A PNG, which asdf-macos-app turns into an .icns with sips and iconutil.
+  ;; res/icon.png is the alien inset in a rounded rectangle, which is what a
+  ;; Mac icon is; iOS takes the full-bleed square and rounds it itself.
+  :bundle-icon "res/icon.png"
   :bundle-executable "lisp-listener"
   ;; NSPrincipalClass, so AppKit is brought up as it would be for any Cocoa
   ;; application rather than halfway through our own startup.
