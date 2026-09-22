@@ -440,12 +440,28 @@ return.  If something does, the thread ends and says so on the way out."
 (defun abort-evaluation (&optional (listener *listener*))
   "Return the listener to its top level, whatever it is doing.
 
-Both halves are needed.  Clearing the queue wakes a thread parked in READ;
-the interrupt reaches one that is off in a computation of its own.  ABORT is
-wrapped because a thread caught between the two restarts has none, and
-CL:ABORT with nothing to abort to signals CONTROL-ERROR."
+One of two mechanisms, chosen by what the thread is doing, and the choice is
+made under the queue's lock so that it cannot be wrong.  A thread parked in
+READ is asked through the queue and aborts itself as it wakes: an interrupt
+does not reliably unwind a thread out of a condition wait, and on ECL does not
+unwind it at all, so Interrupt did nothing to a half-read form.  A thread off
+in a computation is interrupted, because nothing there is reading and a flag
+would sit unnoticed until the next form was typed -- which is also why no flag
+is set in that case, and why a prompt has nothing to clean up.
+
+ABORT is wrapped because a thread caught between the two restarts has none,
+and CL:ABORT with nothing to abort to signals CONTROL-ERROR."
   (let ((thread (and listener (listener-thread listener))))
     (when (and thread (bt:thread-alive-p thread))
-      (queue-clear (listener-input listener))
-      (bt:interrupt-thread thread (lambda () (ignore-errors (abort))))
+      (let ((queue (listener-input listener)))
+        (or (queue-request-abort-if-waiting queue)
+            (bt:interrupt-thread
+             thread
+             (lambda ()
+               ;; Never an abort from inside the wait: there it is lost and the
+               ;; lock is left wrong.  This thread reached the wait after the
+               ;; test above found it computing, so it asks itself instead.
+               (if *in-queue-wait*
+                   (queue-request-abort-from-wait queue)
+                   (ignore-errors (abort)))))))
       t)))

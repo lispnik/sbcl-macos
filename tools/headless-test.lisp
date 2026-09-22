@@ -233,6 +233,39 @@ inherited that would be testing the case before it."
   (say listener "(+ 40 2)")
   (check-text listener "42" "the listener evaluates again afterwards"))
 
+(defcase case-interrupt
+    "Interrupt: out of a computation, and out of a half-read form."
+  ;; The second half is a regression test.  Interrupt cleared the queue and
+  ;; interrupted the thread, and for a thread parked in READ neither had any
+  ;; effect: clearing leaves nothing to return, and an abort delivered by an
+  ;; interrupt does not unwind a thread out of a condition wait -- on ECL not at
+  ;; all.  So Interrupt did nothing at all to a form half read.
+  (say listener "(loop (sleep 0.01))")
+  (sleep 0.3)
+  (check (abort-evaluation listener) "Interrupt reports it did something")
+  (check-text listener "; Aborted." "a running computation is abandoned")
+  (say listener "(+ 1 2)")
+  (check-text listener "3" "and the listener evaluates again")
+  ;; Now the half-read form: READ has taken "(list 1" and waits for the rest.
+  (say listener "(list 1")
+  (sleep 0.3)
+  (let ((before (count-substring "; Aborted." (transcript-so-far listener))))
+    (abort-evaluation listener)
+    (check (let ((deadline (+ (get-internal-real-time)
+                              (* 5 internal-time-units-per-second))))
+             (loop (when (> (count-substring "; Aborted." (transcript-so-far listener))
+                            before)
+                     (return t))
+                   (when (> (get-internal-real-time) deadline) (return nil))
+                   (sleep 0.02)))
+           "a half-read form is abandoned too"))
+  ;; And what is typed next is read as a FRESH form, not as the rest of the
+  ;; abandoned one -- which would have made the check above pass by accident.
+  (say listener "(+ 40 2)")
+  (check-text listener "42" "the next form is read on its own")
+  (check (not (search "(1 42)" (transcript-so-far listener)))
+         "and not as the tail of the form that was abandoned"))
+
 (defcase case-nested-debugger
     "An error AT a debugger prompt opens the next level, not the top level."
   ;; A regression test.  Every evaluation at a debugger prompt ran inside the
@@ -444,7 +477,7 @@ window belonging to a listener that had already gone."
 ;;; ----------------------------------------------------------------------------
 
 (dolist (case '(case-session case-debugger case-use-value case-store-value
-                case-y-or-n-p case-abort case-nested-debugger
+                case-y-or-n-p case-abort case-interrupt case-nested-debugger
                 case-toplevel-restart-index
                 case-interactive-restarts-are-marked
                 case-two-listeners case-nil-is-nobody case-completion

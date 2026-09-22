@@ -168,8 +168,17 @@ time.  READ blocks on it, which is exactly what makes an incomplete form work:
 no new prompt appears and the user carries on typing."))
 
 (defmethod gray-streams:stream-read-char ((stream listener-input-stream))
-  (or (queue-read-char (listener-input (stream-listener stream)))
-      :eof))
+  "The next character, :EOF at end of input -- and an ABORT where the reader
+stands, when Interrupt asked for one.
+
+The abort is taken HERE rather than in the queue: this is the listener thread,
+in ordinary code, with the top-level restart in scope, which is the one place
+an abort out of a blocking read is simple.  See QUEUE-REQUEST-ABORT."
+  (let ((character (queue-read-char (listener-input (stream-listener stream)))))
+    (case character
+      ((nil) :eof)
+      ((:abort) (abort))
+      (t character))))
 
 (defmethod gray-streams:stream-unread-char ((stream listener-input-stream) character)
   (queue-unread-char (listener-input (stream-listener stream)) character)

@@ -293,6 +293,27 @@ Each of these is a bug that actually happened here.
   believes it is nine columns in — so `fresh-line` emits a newline that is
   already on screen and every value gets a blank line above it.
 
+- **On iOS, Interrupt can only reach a listener that is WAITING.** A running
+  computation cannot be stopped at all: in the app this ECL delivers no
+  interrupt to a thread -- measured on a plain spinning thread, not just on the
+  listener's -- and `mp:process-kill` leaves it running too. So `(loop)` typed
+  on a phone is there until the app is killed, and the iOS self-test types no
+  such form, because nothing could get the listener back. On the Mac both
+  states work. Worth raising with lispnik/ecl rather than working around here.
+
+- **Interrupt needs two mechanisms, and the choice must be made under the
+  queue's lock.** An interrupt that aborts does not reliably unwind a thread out
+  of a condition wait: on ECL it does not unwind it at all -- the abort is lost
+  -- and it leaves the lock held-but-not-owned, so the next unlock signals
+  `Attempted to give up lock ... that is not owned by process'. So a thread
+  parked in `read` is asked through the queue's flag and aborts itself as it
+  wakes, and only a thread off in a computation is interrupted.
+  `queue-request-abort-if-waiting` answers under the lock, which is what makes
+  the choice exact; a flag set while the thread was computing would otherwise
+  be left for a later read to trip over, and clearing it at the prompt lost a
+  Stop pressed in the gap between a value and its prompt. `case-interrupt`
+  covers both states, and it took a fifteen-run hammer to see the race.
+
 - **Output inserted at the caret must carry the caret along.** NSTextView
   moves a caret that sits at the insertion point; UITextView leaves it behind,
   in front of the output. `transcript-insert` moves it only if the toolkit did

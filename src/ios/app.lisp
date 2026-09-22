@@ -107,6 +107,22 @@ A step whose predicate has not held within its time fails."
              (unless (string= (pending-input view pointer) "(multiple-value-bind")
                (error "completed to ~s" (pending-input view pointer)))
              (replace-pending-input view pointer "")))
+     ;; Stop, on a form half read -- which is all it can do here.  A running
+     ;; computation cannot be stopped on iOS at all: this ECL delivers no
+     ;; interrupt to a thread in the app, and does not kill one either
+     ;; (measured; see CLAUDE.md).  So nothing below types a form that loops,
+     ;; because nothing could get the listener back.
+     (list "Stop is asked, mid-form" (lambda () (at-top-level-prompt-p listener))
+           (lambda ()
+             (let ((view (listener-view-object listener))
+                   (pointer (listener-view listener)))
+               (replace-pending-input view pointer "(list 1")
+               (submit-input view pointer))
+             (abort-evaluation listener)))
+     (list "Stop abandons a half-read form"
+           (lambda () (let ((text (self-test-text listener)))
+                        (search "; Aborted." text)))
+           nil)
      (list "an error is typed" (constantly t)
            (lambda () (type-line listener "(error \"boom\")")))
      (list "the restarts sheet appears" (lambda () (restarts-panel-visible-p listener))
