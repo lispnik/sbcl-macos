@@ -29,6 +29,9 @@ trailing newline of its own, an extra blank line before every prompt is the
 sort of thing that makes a listener feel unfinished."
   (let ((stream (listener-output listener))
         (level (listener-debug-level listener)))
+    ;; Published for completion, which runs on thread 1 and so cannot see this
+    ;; thread's binding.  At the prompt because that is where IN-PACKAGE shows.
+    (setf (listener-package listener) *package*)
     (with-output-kind (stream :prompt)
       (fresh-line stream)
       (when (plusp level)

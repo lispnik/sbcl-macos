@@ -45,7 +45,7 @@
   ;; LOAD rather than COMPILE-FILE: the compiler's report is compile-check's
   ;; business and duplicating it here would only be noise.  The order is
   ;; lisp-listener.asd's, which is :SERIAL.
-  (dolist (name '("package" "main-thread" "queue" "listener" "view" "streams"
+  (dolist (name '("package" "main-thread" "queue" "listener" "view" "completion" "streams"
                   "restarts" "repl" "window" "screenshot" "app"))
     (load (merge-pathnames (format nil "src/~a.lisp" name) *root*)
           :external-format :utf-8)))
@@ -321,12 +321,37 @@ window belonging to a listener that had already gone."
            (check (null (listener-for-view-object nil)) "nor for a NIL view"))
       (setf *listeners* '() *listener* nil))))
 
+(defcase case-completion "Tab completion: the token, the candidates, the package."
+  (let ((user (find-package "COMMON-LISP-USER")))
+    (check (equal (symbol-completions "multiple-value-b" user) '("multiple-value-bind"))
+           "one candidate completes, in the case it was typed in")
+    (let ((several (symbol-completions "multiple-value-" user)))
+      (check (and (> (length several) 3)
+                  (every (lambda (c) (and (eql 0 (search "multiple-value-" c))
+                                          (string= c (string-downcase c))))
+                         several))
+             "several candidates, all extending the token"))
+    (check (member ":test" (symbol-completions ":tes" user) :test #'string=)
+           "a leading colon completes keywords")
+    (check (member "cl:car" (symbol-completions "cl:ca" user) :test #'string=)
+           "pkg: completes external symbols and keeps the qualifier")
+    (check (member "MAPCAR" (symbol-completions "MAPC" user) :test #'string=)
+           "typing upper case keeps upper case")
+    (check (null (symbol-completions "no-such-package:x" user))
+           "an unknown package completes nothing")
+    (check (= (symbol-token-start "(mapc #'fir") 8)
+           "the token stops at #' and parentheses"))
+  (say listener "(in-package :keyword)")
+  (check-text listener "KEYWORD>" "the prompt follows IN-PACKAGE")
+  (check (eq (listener-completion-package listener) (find-package "KEYWORD"))
+         "and so does the package completion reads"))
+
 ;;; ----------------------------------------------------------------------------
 
 (dolist (case '(case-session case-debugger case-use-value case-store-value
                 case-y-or-n-p case-abort case-toplevel-restart-index
                 case-interactive-restarts-are-marked
-                case-two-listeners case-nil-is-nobody))
+                case-two-listeners case-nil-is-nobody case-completion))
   (funcall case))
 
 (format t "~&~%headless-test: ~d check~:p, ~d failure~:p~%" *checks* *failures*)

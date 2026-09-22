@@ -35,6 +35,10 @@ time to put the event loop away' are the same question.")
   ;; The Lisp side.
   thread
   (debug-level 0)
+  ;; The listener thread's *PACKAGE*, as of its last prompt.  Written there,
+  ;; read on thread 1 by completion, which cannot see the thread's binding.
+  ;; NIL until the first prompt; LISTENER-COMPLETION-PACKAGE supplies CL-USER.
+  (package nil)
   ;; Lisp objects for Objective-C classes that something unretained points at:
   ;; a window's delegate and the application's are both weak references on the
   ;; Cocoa side, so if nothing here held them they would be collected while
@@ -96,6 +100,11 @@ application is in front."
         (listener-for-window key))
       *listener*
       (first *listeners*)))
+
+(defun listener-completion-package (listener)
+  "The package a symbol typed into LISTENER is read in, as far as thread 1 knows."
+  (or (and listener (listener-package listener))
+      (find-package "COMMON-LISP-USER")))
 
 (defun safepoint-build-p ()
   "True on an SBCL built --with-sb-safepoint.

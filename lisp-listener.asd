@@ -31,6 +31,7 @@ an SBCL built --with-sb-safepoint; see the README for why."
                  (:file "queue")
                  (:file "listener")
                  (:file "view")
+                 (:file "completion")
                  (:file "streams")
                  (:file "restarts")
                  (:file "repl")

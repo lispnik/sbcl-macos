@@ -98,9 +98,9 @@ the view**: Return always submits, and if the form is not finished no new prompt
 appears. That falls out of the design rather than being arranged.
 
 `src/` loads `:serial t` and **the component order in `lisp-listener.asd` is
-load-bearing**: `package main-thread queue listener view streams restarts repl
-window screenshot app`. `tools/compile-check.lisp` carries the same list by hand;
-a new file has to be added in both.
+load-bearing**: `package main-thread queue listener view completion streams restarts repl
+window screenshot app`. `tools/compile-check.lisp` and `tools/headless-test.lisp`
+each carry the same list by hand; a new file has to be added in all three.
 
 - `src/listener.lisp` — the `listener` struct, holding both halves. **Nothing in
   it may be filled in at load time**: a foreign pointer does not survive
@@ -108,6 +108,10 @@ a new file has to be added in both.
 - `src/view.lisp` — the `LispListenerView` `NSTextView` subclass, the
   `define-listener-method` macro (every IMP wrapped in `handler-case`), the
   transcript primitives and the AppKit constants.
+- `src/completion.lisp` — Tab completion: `-insertTab:`, `-rangeForUserCompletion`
+  and `-completionsForPartialWordRange:…` feed NSTextView's own popup with
+  symbols from the listener's package, which `emit-prompt` publishes in the
+  `listener-package` slot because thread 1 cannot see the thread's `*package*`.
 - `src/streams.lisp` — the gray streams, and the segment buffer that coalesces a
   thousand `write-char`s into one hop to the main thread.
 - `src/restarts.lisp` — the LispWorks-style restarts panel: an `NSTableView` of
@@ -198,7 +202,9 @@ Each of these is a bug that actually happened here.
 - **Escape needs two selectors, and the conventional one is not the one that
   works.** Escape is `-cancelOperation:` in most controls, but inside an
   `NSTextView` the standard key bindings send it to `-complete:`. Overriding only
-  `-cancelOperation:` looks correct and does nothing.
+  `-cancelOperation:` looks correct and does nothing. The reverse holds for Tab:
+  it calls **super's** `-complete:`, because the view's own override cancels a
+  debugger level first.
 
 - **Compute the restarts panel's labels on the LISTENER thread.** A restart's
   report may read the *current* thread rather than the one it was established on;
