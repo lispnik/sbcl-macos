@@ -170,6 +170,13 @@ NSTextView and UITextView share.
   red when it has none. Input region only.
 - `src/config.lisp` — `init.lisp`, read from `history-directory` at startup, so a
   rebinding survives a launch. A broken one is reported, never fatal.
+- `src/history-search.lisp` — the history picker: ⌘R lists everything submitted,
+  typing narrows it (every whitespace-separated term must appear, ignoring case),
+  and a chosen row goes into the input region **unsubmitted**. The filtering is
+  pure; the list is `src/macos/history-panel.lisp` (an `NSPanel` with an
+  `NSSearchField` over an `NSTableView`) or `src/ios/history-sheet.lisp` (a sheet
+  with a `UISearchBar`), behind `show-history-popup` / `hide-history-popup` /
+  `history-popup-visible-p`.
 - `src/completion.lisp` — symbol completion, from the listener's package, which
   `emit-prompt` publishes in the `listener-package` slot because thread 1 cannot
   see the thread's `*package*`. It also has `complete-at-caret`, the shell-style
@@ -341,6 +348,12 @@ Each of these is a bug that actually happened here.
   whether the affected range starts at the caret or one before it. Both commands
   return two values, so they cannot be written with `OR` -- it keeps only the
   first, and the caret went to NIL.
+
+- **`show-history-popup` takes the old list down, so "forgetting" must not drop
+  the rows.** `forget-history-popup` cleared the controller's rows as well as the
+  panel, and since showing hides first, it emptied the list
+  `open-history-popup` had just filled: the table came up with nothing in it.
+  Stale rows are harmless — the next open replaces them.
 
 - **A character typed beside a tinted paren INHERITS the tint**, because a text
   view takes its typing attributes from the character at the insertion point.

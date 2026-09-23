@@ -54,6 +54,14 @@ with NIL and builds a fresh one.")
   (handler-case (abort-evaluation (current-listener))
     (error (condition) (note "listenerInterrupt: ~a" condition))))
 
+(objc:define-objc-method ("listenerHistory:" :void)
+    ((self listener-controller) (sender objc:objc-object-pointer))
+  (declare (ignorable sender))
+  ;; A menu item, so that Command-R comes for free: the key equivalent is
+  ;; AppKit's to deliver, and -keyDown: never sees it.
+  (handler-case (open-history-popup (current-listener))
+    (error (condition) (note "listenerHistory: ~a" condition))))
+
 (objc:define-objc-method ("listenerClearTranscript:" :void)
     ((self listener-controller) (sender objc:objc-object-pointer))
   (declare (ignorable sender))
@@ -121,11 +129,14 @@ try to reach thread 1 before there is a view to deliver the hop to."
     (load-init-file))
   (objc.runloop:shared-application :activation-policy activation-policy)
   (let ((listener (make-listener))
-        (restarts (make-instance 'restarts-controller)))
-    ;; A button's target is NOT retained by Cocoa, so the restarts controller
-    ;; has to be held here or it would be collected while still installed.
+        (restarts (make-instance 'restarts-controller))
+        (history (make-instance 'history-controller)))
+    ;; A button's target is NOT retained by Cocoa, so these controllers have to
+    ;; be held here or they would be collected while still installed.
     (setf (controller-listener restarts) listener
-          (getf (listener-retained listener) :restarts-controller) restarts)
+          (getf (listener-retained listener) :restarts-controller) restarts
+          (history-controller-listener history) listener
+          (getf (listener-retained listener) :history-controller) history)
     (make-listener-window listener :title title)
     ;; Registered BEFORE the thread starts, and before anything can ask which
     ;; listener a view belongs to.

@@ -37,6 +37,7 @@
                  (:file "completion")
                  (:file "paren-highlight")
                  (:file "paredit-view")
+                 (:file "history-search")
                  (:file "streams")
                  (:file "config")
                  (:file "restarts")
@@ -65,6 +66,7 @@ an SBCL built --with-sb-safepoint; see the README for why."
                 ((:file "view")
                  (:file "window")
                  (:file "restarts-panel")
+                 (:file "history-panel")
                  (:file "screenshot")
                  (:file "app")))))
 
@@ -80,4 +82,5 @@ an SBCL built --with-sb-safepoint; see the README for why."
                 :components
                 ((:file "view")
                  (:file "restarts-sheet")
+                 (:file "history-sheet")
                  (:file "app")))))

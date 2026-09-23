@@ -40,6 +40,8 @@
    #:paredit-key
    #:*paredit-commands*
    #:*paren-highlight-enabled*
+   #:*history-popup-rows*
+   #:open-history-popup
    #:*restarts-panel-enabled*
    #:*backtrace-enabled*
    #:*backtrace-frames*

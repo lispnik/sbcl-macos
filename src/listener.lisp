@@ -53,6 +53,9 @@ time to put the event loop away' are the same question.")
   restarts-panel
   restarts-table
   restarts-invoke
+  ;; The history list, while one is up.  Thread 1 only.
+  history-panel
+  history-table
   ;; Set from MAIN when the application is a bundle, so that quitting can go
   ;; through -[NSApplication terminate:] rather than SB-EXT:EXIT.
   (bundled nil))

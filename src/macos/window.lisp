@@ -287,6 +287,8 @@ and a menu item whose action no longer resolves is one nothing else notices."
     (add-submenu main "Listener"
                  '(("New Listener" "listenerNewListener:" "n")
                    :separator
+                   ("History…" "listenerHistory:" "r")
+                   :separator
                    ("Interrupt" "listenerInterrupt:" ".")
                    ("Clear Transcript" "listenerClearTranscript:" "k"))
                  controller)

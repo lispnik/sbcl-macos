@@ -101,6 +101,10 @@ ECL never signals a thread to collect garbage, so the question does not arise."
                 paren-background-color invalidate-key-commands
                 ;; The restarts, on screen: build and show, take down, ask.
                 show-restarts-panel hide-restarts-panel restarts-panel-visible-p
+                ;; The history list, the same three ways.
+                show-history-popup hide-history-popup history-popup-visible-p
+                ;; Which listener a menu item or a key means.
+                current-listener
                 ;; LISTENER-TEXT-VIEW's slot accessors.  The class is the front
                 ;; end's -- its superclass is NSTextView or UITextView -- and
                 ;; the transcript in the core reads and writes its slots.

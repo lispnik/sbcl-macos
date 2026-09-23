@@ -175,6 +175,7 @@ mask."
       (key "Esc" (lambda () (key-escape)))
       (key "↑" (lambda () (key-arrow object -1)))
       (key "↓" (lambda () (key-arrow object 1)))
+      (key "Hist" (lambda () (open-history-popup *listener*)))
       (key "Clear" (lambda () (clear-transcript *listener*)))
       (key "Stop" (lambda () (abort-evaluation *listener*))))
     bar))
@@ -262,6 +263,8 @@ time: a pointer made at load time would not survive into the app.")
                              (key-command "." "listenerInterrupt:"
                                           +ui-key-modifier-command+)
                              (key-command "k" "listenerClear:"
+                                          +ui-key-modifier-command+)
+                             (key-command "r" "listenerHistory:"
                                           +ui-key-modifier-command+)))
                 (objc:invoke array "addObject:" command))
               ;; And one per CHORD in *PAREDIT-KEYS*.  The bare characters are
@@ -327,6 +330,9 @@ key in that position on a keyboard attached to an iPad."
 
 (define-listener-method ("listenerClear:" :void) ((sender objc:objc-object-pointer))
   (clear-transcript *listener*))
+
+(define-listener-method ("listenerHistory:" :void) ((sender objc:objc-object-pointer))
+  (open-history-popup *listener*))
 
 ;;; One IMP for every paredit chord: the UIKeyCommand says which key it was, so
 ;;; the keymap can be consulted exactly as the Mac's -keyDown: does.

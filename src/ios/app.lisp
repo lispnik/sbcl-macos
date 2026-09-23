@@ -21,9 +21,12 @@ target the listener thread hops to, and only then the thread."
   (load-init-file)
   (let ((listener (make-listener))
         (restarts (make-instance 'restarts-controller))
+        (history (make-instance 'history-controller))
         (root (uikit:root-view)))
     (setf (controller-listener restarts) listener
-          (getf (listener-retained listener) :restarts-controller) restarts)
+          (getf (listener-retained listener) :restarts-controller) restarts
+          (history-controller-listener history) listener
+          (getf (listener-retained listener) :history-controller) history)
     (multiple-value-bind (pointer object) (make-listener-view)
       (setf (listener-view listener) pointer
             (listener-view-object listener) object
@@ -137,6 +140,40 @@ A step whose predicate has not held within its time fails."
              (unless (string= (pending-input view pointer) "(multiple-value-bind")
                (error "completed to ~s" (pending-input view pointer)))
              (replace-pending-input view pointer "")))
+     ;; The history list: opened, narrowed, and a row chosen, which puts the
+     ;; line in the input region without submitting it.
+     (list "the history list opens and narrows"
+           (lambda () (at-top-level-prompt-p listener))
+           (lambda ()
+             (let ((view (listener-view-object listener))
+                   (pointer (listener-view listener)))
+               ;; Something to find, whatever earlier launches left behind.
+               (setf (view-history view)
+                     (list "(list :from-the-history)" "(+ 40 2)"))
+               (unless (open-history-popup listener)
+                 (error "the list would not open"))
+               (unless (history-popup-visible-p listener)
+                 (error "the list is not on screen"))
+               (unless (eql 2 (history-row-count listener))
+                 (error "~a rows, wanted 2" (history-row-count listener)))
+               (type-history-query "from" listener)
+               (unless (eql 1 (history-row-count listener))
+                 (error "~a rows after narrowing, wanted 1"
+                        (history-row-count listener))))))
+     ;; Left on screen, narrowed, for the hold to be photographed.
+     (list :hold nil nil)
+     (list "and a chosen row lands in the input region, unsubmitted"
+           (constantly t)
+           (lambda ()
+             (let ((view (listener-view-object listener))
+                   (pointer (listener-view listener)))
+               (choose-history-row listener 0)
+               (unless (string= (pending-input view pointer)
+                                "(list :from-the-history)")
+                 (error "chose ~s" (pending-input view pointer)))
+               (when (history-popup-visible-p listener)
+                 (error "the list stayed on screen"))
+               (replace-pending-input view pointer ""))))
      ;; Paredit, through the same delegate a keyboard goes through: each
      ;; character is offered to -textView:shouldChangeTextInRange:replacementText:
      ;; exactly as UIKit offers it.

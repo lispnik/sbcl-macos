@@ -52,12 +52,14 @@
   ;; down -- but loading the one that ships on this Lisp keeps it honest.
   (dolist (name (append '("package" "impl" "main-thread" "queue" "listener"
                           "history" "sexp" "paredit" "keymap" "transcript"
-                          "completion" "paren-highlight" "paredit-view" "streams"
-                          "config"
+                          "completion" "paren-highlight" "paredit-view" "history-search"
+                          "streams" "config"
                           "restarts" "repl")
                         #+sbcl '("macos/view" "macos/window" "macos/restarts-panel"
-                                 "macos/screenshot" "macos/app")
-                        #+ecl '("ios/view" "ios/restarts-sheet" "ios/app")))
+                                 "macos/history-panel" "macos/screenshot"
+                                 "macos/app")
+                        #+ecl '("ios/view" "ios/restarts-sheet" "ios/history-sheet"
+                                "ios/app")))
     (load (merge-pathnames (format nil "src/~a.lisp" name) *root*)
           :external-format :utf-8)))
 
@@ -450,6 +452,35 @@ leaves the caret as much as on the text -- and a test that says
                      :declined)))
         (check (equal got after) "~a: ~s => ~s" label before got)))))
 
+(defun case-history-search ()
+  "The history list's narrowing: every term must appear, in any order."
+  (format t "~&~%History search: narrowing the list of what was typed.~%")
+  (finish-output)
+  (let ((lines '("(mapcar #'list xs)" "(list 1 2)" "(room)" "(LIST :UPPER)")))
+    (check (equal (history-search lines "") lines) "an empty query matches everything")
+    (check (equal (history-search lines "room") '("(room)")) "one term narrows")
+    (check (equal (history-search lines "list")
+                  '("(mapcar #'list xs)" "(list 1 2)" "(LIST :UPPER)"))
+           "and matches ignoring case")
+    ;; Both terms, in either order, anywhere in the line.
+    (check (equal (history-search lines "list map") '("(mapcar #'list xs)"))
+           "every term must appear, in any order")
+    (check (null (history-search lines "list nosuch")) "a term that matches nothing wins")
+    (check (equal (history-search lines "  list   1  ") '("(list 1 2)"))
+           "extra whitespace between terms is nothing")
+    ;; The row cap, and that it takes the newest.
+    (let ((*history-popup-rows* 2))
+      (check (equal (history-search lines "") '("(mapcar #'list xs)" "(list 1 2)"))
+             "the list is capped at *HISTORY-POPUP-ROWS*")))
+  ;; What the list is built from: the view's history, newest first, deduplicated.
+  (let ((view (make-instance 'listener-text-view)))
+    (setf (view-history view) '("(b)" "(a)" "(b)" "(c)"))
+    (check (equal (history-lines view) '("(b)" "(a)" "(c)"))
+           "the list drops repeats, keeping the newest of each")
+    (setf (view-history view) '())
+    (check (null (history-lines view)) "and an empty history offers nothing"))
+  (check (equal (split-on-whitespace " a  bc ") '("a" "bc")) "terms split on whitespace"))
+
 (defun case-sexp ()
   "The scanner: what is code, what matches what."
   (format t "~&~%Sexp scanning: parens, and the ones that only look like parens.~%")
@@ -704,6 +735,7 @@ bound away from the front end's own -- a test has no business writing into
                 case-interactive-restarts-are-marked
                 case-two-listeners case-nil-is-nobody case-history case-completion
                 case-sexp case-paredit case-keymap case-init-file
+                case-history-search
                 case-prompt-is-recorded))
   (funcall case))
 
