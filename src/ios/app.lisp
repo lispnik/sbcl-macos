@@ -113,142 +113,143 @@ delegate at all, so it walked straight past the hook this is here to test."
 (defun build-self-test-steps (listener)
   "Each step: a label, a predicate that says it may run, and what it does.
 A step whose predicate has not held within its time fails."
-  (let ((view (listener-view-object listener))
-        (pointer (listener-view listener)))
-    (list
-     (list "the listener prompts" (lambda () (at-top-level-prompt-p listener)) nil)
-     ;; What the last launch left behind.  Zero on a first run, which is not a
-     ;; failure -- the number is the interesting part, so it is logged.
-     (list "init.lisp" (constantly t)
-           (lambda ()
-             (note "selftest: init file ~s, C-M-t bound to ~a"
-                   *init-file-loaded* (paredit-key "C-M-t"))))
-     (list "the saved history is loaded" (constantly t)
-           (lambda ()
-             (note "selftest: history has ~d line~:p from earlier launches"
-                   (length (view-history (listener-view-object listener))))))
-     (list "(+ 1 2) is typed" (constantly t) (lambda () (type-line listener "(+ 1 2)")))
-     (list "it evaluates to 3"
-           (lambda () (let ((text (self-test-text listener)))
-                        (search (format nil "~%3~%") text)))
-           nil)
-     (list "Tab completes multiple-value-b"
-           (lambda () (at-top-level-prompt-p listener))
-           (lambda ()
+  ;; Each step that touches the view looks it up itself: the steps run one per
+  ;; tick, long after this list was built.
+  (list
+   (list "the listener prompts" (lambda () (at-top-level-prompt-p listener)) nil)
+   ;; What the last launch left behind.  Zero on a first run, which is not a
+   ;; failure -- the number is the interesting part, so it is logged.
+   (list "init.lisp" (constantly t)
+         (lambda ()
+           (note "selftest: init file ~s, C-M-t bound to ~a"
+                 *init-file-loaded* (paredit-key "C-M-t"))))
+   (list "the saved history is loaded" (constantly t)
+         (lambda ()
+           (note "selftest: history has ~d line~:p from earlier launches"
+                 (length (view-history (listener-view-object listener))))))
+   (list "(+ 1 2) is typed" (constantly t) (lambda () (type-line listener "(+ 1 2)")))
+   (list "it evaluates to 3"
+         (lambda () (let ((text (self-test-text listener)))
+                      (search (format nil "~%3~%") text)))
+         nil)
+   (list "Tab completes multiple-value-b"
+         (lambda () (at-top-level-prompt-p listener))
+         (lambda ()
+           (let ((view (listener-view-object listener))
+                 (pointer (listener-view listener)))
              (replace-pending-input view pointer "(multiple-value-b")
              (complete-at-caret view pointer)
              (unless (string= (pending-input view pointer) "(multiple-value-bind")
                (error "completed to ~s" (pending-input view pointer)))
-             (replace-pending-input view pointer "")))
-     ;; The history list: opened, narrowed, and a row chosen, which puts the
-     ;; line in the input region without submitting it.
-     (list "the history list opens and narrows"
-           (lambda () (at-top-level-prompt-p listener))
-           (lambda ()
-             (let ((view (listener-view-object listener))
-                   (pointer (listener-view listener)))
-               ;; Something to find, whatever earlier launches left behind.
-               (setf (view-history view)
-                     (list "(list :from-the-history)" "(+ 40 2)"))
-               (unless (open-history-popup listener)
-                 (error "the list would not open"))
-               (unless (history-popup-visible-p listener)
-                 (error "the list is not on screen"))
-               (unless (eql 2 (history-row-count listener))
-                 (error "~a rows, wanted 2" (history-row-count listener)))
-               (type-history-query "from" listener)
-               (unless (eql 1 (history-row-count listener))
-                 (error "~a rows after narrowing, wanted 1"
-                        (history-row-count listener))))))
-     ;; Left on screen, narrowed, for the hold to be photographed.
-     (list :hold nil nil)
-     (list "and a chosen row lands in the input region, unsubmitted"
-           (constantly t)
-           (lambda ()
-             (let ((view (listener-view-object listener))
-                   (pointer (listener-view listener)))
-               (choose-history-row listener 0)
-               (unless (string= (pending-input view pointer)
-                                "(list :from-the-history)")
-                 (error "chose ~s" (pending-input view pointer)))
-               (when (history-popup-visible-p listener)
-                 (error "the list stayed on screen"))
-               (replace-pending-input view pointer ""))))
-     ;; Paredit, through the same delegate a keyboard goes through: each
-     ;; character is offered to -textView:shouldChangeTextInRange:replacementText:
-     ;; exactly as UIKit offers it.
-     (list "paredit balances what is typed" (lambda () (at-top-level-prompt-p listener))
-           (lambda ()
-             (let ((view (listener-view-object listener))
-                   (pointer (listener-view listener)))
-               (replace-pending-input view pointer "")
-               (type-into-view pointer "(list 1 2")
-               (unless (string= (pending-input view pointer) "(list 1 2)")
-                 (error "( did not auto-close: ~s" (pending-input view pointer)))
-               (type-into-view pointer ")")
-               (unless (string= (pending-input view pointer) "(list 1 2)")
-                 (error ") doubled the paren: ~s" (pending-input view pointer)))
-               ;; The highlight: the caret is just past the close paren.
-               (refresh-paren-highlight view pointer)
-               (unless (= 2 (length (view-paren-marks view)))
-                 (error "~d paren~:p tinted, wanted 2"
-                        (length (view-paren-marks view))))
-               ;; And a structural command, as its key would run it.
-               (replace-pending-input view pointer "(list (a) b)")
-               (objc:invoke pointer "setSelectedRange:"
-                            (cons (+ (view-input-start view) 8) 0))
-               (unless (run-paredit-at-caret view pointer 'slurp-forward)
-                 (error "slurp declined"))
-               (unless (string= (pending-input view pointer) "(list (a b))")
-                 (error "slurp gave ~s" (pending-input view pointer)))
-               ;; Left on screen, tinted, for the hold below to be photographed.
-               (replace-pending-input view pointer "(defun f (x) (list x))")
-               (objc:invoke pointer "setSelectedRange:"
-                            (cons (transcript-length pointer) 0))
-               (refresh-paren-highlight view pointer))))
-     (list :hold nil nil)
-     (list "the tinted pair is cleared away" (constantly t)
-           (lambda ()
-             (let ((view (listener-view-object listener))
-                   (pointer (listener-view listener)))
-               (replace-pending-input view pointer ""))))
-     ;; Stop, on a form half read -- which is all it can do here.  A running
-     ;; computation cannot be stopped on iOS at all: this ECL delivers no
-     ;; interrupt to a thread in the app, and does not kill one either
-     ;; (measured; see CLAUDE.md).  So nothing below types a form that loops,
-     ;; because nothing could get the listener back.
-     (list "Stop is asked, mid-form" (lambda () (at-top-level-prompt-p listener))
-           (lambda ()
-             (let ((view (listener-view-object listener))
-                   (pointer (listener-view listener)))
-               (replace-pending-input view pointer "(list 1")
-               (submit-input view pointer))
-             (abort-evaluation listener)))
-     (list "Stop abandons a half-read form"
-           (lambda () (let ((text (self-test-text listener)))
-                        (search "; Aborted." text)))
-           nil)
-     (list "an error is typed" (constantly t)
-           (lambda () (type-line listener "(error \"boom\")")))
-     (list "the restarts sheet appears" (lambda () (restarts-panel-visible-p listener))
-           nil)
-     ;; The table, not just the sheet: a data source that was never found
-     ;; answers zero, and a sheet of blank rows looks identical in a picture.
-     (list "its table has a row per restart" (constantly t)
-           (lambda ()
-             (let ((rows (restarts-table-row-count listener)))
-               (unless (and rows (>= rows 2))
-                 (error "the table has ~a rows" rows)))))
-     (list :hold nil nil)
-     (list "Cancel returns to the top level" (constantly t)
-           (lambda ()
-             (unless (cancel-to-top-level listener)
-               (error "no top-level restart on offer"))))
-     (list "the top-level prompt is back"
-           (lambda () (and (at-top-level-prompt-p listener)
-                           (not (restarts-panel-visible-p listener))))
-           nil)
-     (list :hold nil nil))))
+             (replace-pending-input view pointer ""))))
+   ;; The history list: opened, narrowed, and a row chosen, which puts the
+   ;; line in the input region without submitting it.
+   (list "the history list opens and narrows"
+         (lambda () (at-top-level-prompt-p listener))
+         (lambda ()
+           (let ((view (listener-view-object listener)))
+             ;; Something to find, whatever earlier launches left behind.
+             (setf (view-history view)
+                   (list "(list :from-the-history)" "(+ 40 2)"))
+             (unless (open-history-popup listener)
+               (error "the list would not open"))
+             (unless (history-popup-visible-p listener)
+               (error "the list is not on screen"))
+             (unless (eql 2 (history-row-count listener))
+               (error "~a rows, wanted 2" (history-row-count listener)))
+             (type-history-query "from" listener)
+             (unless (eql 1 (history-row-count listener))
+               (error "~a rows after narrowing, wanted 1"
+                      (history-row-count listener))))))
+   ;; Left on screen, narrowed, for the hold to be photographed.
+   (list :hold nil nil)
+   (list "and a chosen row lands in the input region, unsubmitted"
+         (constantly t)
+         (lambda ()
+           (let ((view (listener-view-object listener))
+                 (pointer (listener-view listener)))
+             (choose-history-row listener 0)
+             (unless (string= (pending-input view pointer)
+                              "(list :from-the-history)")
+               (error "chose ~s" (pending-input view pointer)))
+             (when (history-popup-visible-p listener)
+               (error "the list stayed on screen"))
+             (replace-pending-input view pointer ""))))
+   ;; Paredit, through the same delegate a keyboard goes through: each
+   ;; character is offered to -textView:shouldChangeTextInRange:replacementText:
+   ;; exactly as UIKit offers it.
+   (list "paredit balances what is typed" (lambda () (at-top-level-prompt-p listener))
+         (lambda ()
+           (let ((view (listener-view-object listener))
+                 (pointer (listener-view listener)))
+             (replace-pending-input view pointer "")
+             (type-into-view pointer "(list 1 2")
+             (unless (string= (pending-input view pointer) "(list 1 2)")
+               (error "( did not auto-close: ~s" (pending-input view pointer)))
+             (type-into-view pointer ")")
+             (unless (string= (pending-input view pointer) "(list 1 2)")
+               (error ") doubled the paren: ~s" (pending-input view pointer)))
+             ;; The highlight: the caret is just past the close paren.
+             (refresh-paren-highlight view pointer)
+             (unless (= 2 (length (view-paren-marks view)))
+               (error "~d paren~:p tinted, wanted 2"
+                      (length (view-paren-marks view))))
+             ;; And a structural command, as its key would run it.
+             (replace-pending-input view pointer "(list (a) b)")
+             (objc:invoke pointer "setSelectedRange:"
+                          (cons (+ (view-input-start view) 8) 0))
+             (unless (run-paredit-at-caret view pointer 'slurp-forward)
+               (error "slurp declined"))
+             (unless (string= (pending-input view pointer) "(list (a b))")
+               (error "slurp gave ~s" (pending-input view pointer)))
+             ;; Left on screen, tinted, for the hold below to be photographed.
+             (replace-pending-input view pointer "(defun f (x) (list x))")
+             (objc:invoke pointer "setSelectedRange:"
+                          (cons (transcript-length pointer) 0))
+             (refresh-paren-highlight view pointer))))
+   (list :hold nil nil)
+   (list "the tinted pair is cleared away" (constantly t)
+         (lambda ()
+           (let ((view (listener-view-object listener))
+                 (pointer (listener-view listener)))
+             (replace-pending-input view pointer ""))))
+   ;; Stop, on a form half read -- which is all it can do here.  A running
+   ;; computation cannot be stopped on iOS at all: this ECL delivers no
+   ;; interrupt to a thread in the app, and does not kill one either
+   ;; (measured; see CLAUDE.md).  So nothing below types a form that loops,
+   ;; because nothing could get the listener back.
+   (list "Stop is asked, mid-form" (lambda () (at-top-level-prompt-p listener))
+         (lambda ()
+           (let ((view (listener-view-object listener))
+                 (pointer (listener-view listener)))
+             (replace-pending-input view pointer "(list 1")
+             (submit-input view pointer))
+           (abort-evaluation listener)))
+   (list "Stop abandons a half-read form"
+         (lambda () (let ((text (self-test-text listener)))
+                      (search "; Aborted." text)))
+         nil)
+   (list "an error is typed" (constantly t)
+         (lambda () (type-line listener "(error \"boom\")")))
+   (list "the restarts sheet appears" (lambda () (restarts-panel-visible-p listener))
+         nil)
+   ;; The table, not just the sheet: a data source that was never found
+   ;; answers zero, and a sheet of blank rows looks identical in a picture.
+   (list "its table has a row per restart" (constantly t)
+         (lambda ()
+           (let ((rows (restarts-table-row-count listener)))
+             (unless (and rows (>= rows 2))
+               (error "the table has ~a rows" rows)))))
+   (list :hold nil nil)
+   (list "Cancel returns to the top level" (constantly t)
+         (lambda ()
+           (unless (cancel-to-top-level listener)
+             (error "no top-level restart on offer"))))
+   (list "the top-level prompt is back"
+         (lambda () (and (at-top-level-prompt-p listener)
+                         (not (restarts-panel-visible-p listener))))
+         nil)
+   (list :hold nil nil)))
 
 (defun start-self-test (listener hold)
   (setf *self-test* (make-self-test listener hold (build-self-test-steps listener)))
