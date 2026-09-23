@@ -94,6 +94,12 @@ A step whose predicate has not held within its time fails."
         (pointer (listener-view listener)))
     (list
      (list "the listener prompts" (lambda () (at-top-level-prompt-p listener)) nil)
+     ;; What the last launch left behind.  Zero on a first run, which is not a
+     ;; failure -- the number is the interesting part, so it is logged.
+     (list "the saved history is loaded" (constantly t)
+           (lambda ()
+             (note "selftest: history has ~d line~:p from earlier launches"
+                   (length (view-history (listener-view-object listener))))))
      (list "(+ 1 2) is typed" (constantly t) (lambda () (type-line listener "(+ 1 2)")))
      (list "it evaluates to 3"
            (lambda () (let ((text (self-test-text listener)))

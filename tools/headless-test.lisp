@@ -51,7 +51,8 @@
   ;; iOS's on ECL.  Nothing here reaches either -- they are stubs all the way
   ;; down -- but loading the one that ships on this Lisp keeps it honest.
   (dolist (name (append '("package" "impl" "main-thread" "queue" "listener"
-                          "transcript" "completion" "streams" "restarts" "repl")
+                          "history" "transcript" "completion" "streams"
+                          "restarts" "repl")
                         #+sbcl '("macos/view" "macos/window" "macos/restarts-panel"
                                  "macos/screenshot" "macos/app")
                         #+ecl '("ios/view" "ios/restarts-sheet" "ios/app")))
@@ -431,6 +432,61 @@ window belonging to a listener that had already gone."
            (check (null (listener-for-view-object nil)) "nor for a NIL view"))
       (setf *listeners* '() *listener* nil))))
 
+(defun case-history ()
+  "The history is saved as each line is submitted, and read back at the next
+launch.
+
+No listener here: this is a file, a limit and two functions.  The directory is
+bound away from the front end's own -- a test has no business writing into
+~/Library."
+  (format t "~&~%History: saved between launches, trimmed, and never fatal.~%")
+  (finish-output)
+  (let* ((directory (merge-pathnames
+                     (format nil "lisp-listener-test-~d/" (get-universal-time))
+                     (uiop:temporary-directory)))
+         (*history-directory* directory))
+    (unwind-protect
+         (progn
+           (check (null (load-history)) "an empty history reads as no lines")
+           (record-history-line "(+ 1 2)")
+           (record-history-line "(list :a)")
+           (check (equal (load-history) '("(list :a)" "(+ 1 2)"))
+                  "what was recorded comes back, newest first")
+           ;; A submitted form may be several lines long, which is why the
+           ;; records are printed strings rather than the file's own lines.
+           (record-history-line (format nil "(defun f ()~%  :multi)"))
+           (check (equal (first (load-history))
+                         (format nil "(defun f ()~%  :multi)"))
+                  "a form of several lines survives the round trip")
+           ;; The trim, and that it is written back rather than only applied.
+           (let ((*history-limit* 2))
+             (check (equal (load-history) '("(defun f ()
+  :multi)" "(list :a)"))
+                    "only the newest LIMIT lines are kept"))
+           (let ((*history-limit* 2))
+             (load-history)
+             (check (= 2 (length (read-history-file (history-file))))
+                    "and the file itself is trimmed, once"))
+           (check (equal (load-history)
+                         (list (format nil "(defun f ()~%  :multi)") "(list :a)"))
+                  "so a later launch sees the trimmed list")
+           ;; A view gets the saved history when it is made.
+           (let ((view (make-instance (quote listener-text-view))))
+             (initialize-view-history view)
+             (check (equal (view-history view) (load-history))
+                    "a new view starts with the saved history")
+             (check (null (view-history-index view))
+                    "and not part way through it")))
+      (ignore-errors (uiop:delete-directory-tree directory :validate t))))
+  ;; Nowhere to write: the listener must not care.  This is the iOS-style
+  ;; failure -- a path that cannot be created -- and it must cost the history
+  ;; and nothing else.
+  (let ((*history-directory* #p"/lisp-listener-cannot-write-here/"))
+    (check (string= "(+ 1 2)" (record-history-line "(+ 1 2)"))
+           "recording into an unwritable place does not signal")
+    (check (null (load-history))
+           "and reading from one answers no lines")))
+
 (defcase case-completion "Tab completion: the token, the candidates, the package."
   (let ((user (find-package "COMMON-LISP-USER")))
     (check (equal (symbol-completions "multiple-value-b" user) '("multiple-value-bind"))
@@ -480,7 +536,7 @@ window belonging to a listener that had already gone."
                 case-y-or-n-p case-abort case-interrupt case-nested-debugger
                 case-toplevel-restart-index
                 case-interactive-restarts-are-marked
-                case-two-listeners case-nil-is-nobody case-completion
+                case-two-listeners case-nil-is-nobody case-history case-completion
                 case-prompt-is-recorded))
   (funcall case))
 

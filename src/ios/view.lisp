@@ -23,6 +23,21 @@
 
 ;;; Colours, font, run loop ---------------------------------------------------
 
+(defun history-directory ()
+  "The app's Documents directory, which is HOME here.
+
+From the environment, NOT from USER-HOMEDIR-PATHNAME: asdf-ios-app's ECLBoot
+points HOME at Documents -- the one directory the app may write -- before
+cl_boot, and it is where its own console.log goes.  ECL\'s
+USER-HOMEDIR-PATHNAME ignores HOME and asks the password database, which in the
+simulator answers the MAC\'s home directory: the history was read from and
+written to ~/Library on the development machine, and nothing appeared in the
+container at all.  Measured, once the simulator reported a history three lines
+long on a first run."
+  (let ((home (getenv "HOME")))
+    (when home
+      (pathname (concatenate 'string (string-right-trim "/" home) "/")))))
+
 (defun transcript-color (kind)
   (ecase kind
     ((:output :input) (objc:invoke "UIColor" "labelColor"))
@@ -97,6 +112,7 @@ Returns (VALUES POINTER OBJECT)."
     (objc:invoke view "setBackgroundColor:"
                  (objc:invoke "UIColor" "systemBackgroundColor"))
     (objc:invoke view "setTypingAttributes:" (transcript-attributes :input))
+    (initialize-view-history object)
     ;; Its own delegate, as on the Mac.  The delegate property is weak, and
     ;; the view is held by its superview and by the listener, so nothing more
     ;; is needed to keep it.

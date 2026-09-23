@@ -37,6 +37,7 @@ Returns (VALUES POINTER OBJECT)."
     (objc:invoke view "setSelectable:" t)
     (objc:invoke view "setAutoresizingMask:" +ns-view-width-and-height-sizable+)
     (objc:invoke view "setTypingAttributes:" (transcript-attributes :input))
+    (initialize-view-history object)
     ;; Its own delegate.  AppKit finds a delegate method through
     ;; -respondsToSelector:, which a real class_addMethod'd IMP satisfies, so
     ;; this needs no protocol declaration and no second object to keep alive.

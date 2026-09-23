@@ -186,7 +186,10 @@ read-only in the same breath.  Nothing is echoed: it is already on screen."
           (history (view-history view)))
       (when (and (plusp (length trimmed))
                  (not (and history (string= trimmed (first history)))))
-        (push trimmed (view-history view))))
+        (push trimmed (view-history view))
+        ;; Saved as it is submitted, not when the application quits; see
+        ;; src/history.lisp.
+        (record-history-line trimmed)))
     ;; THIS view's listener, worked out from the view, rather than whichever
     ;; one *LISTENER* happens to name.  The IMP that calls this binds it
     ;; correctly, but SUBMIT-INPUT is also called directly -- by the screenshot

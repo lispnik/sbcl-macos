@@ -29,6 +29,7 @@
                  (:file "main-thread")
                  (:file "queue")
                  (:file "listener")
+                 (:file "history")
                  (:file "transcript")
                  (:file "completion")
                  (:file "streams")

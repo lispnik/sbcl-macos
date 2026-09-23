@@ -93,6 +93,8 @@ ECL never signals a thread to collect garbage, so the question does not arise."
                 transcript-color transcript-font
                 ;; The run loop modes a hop to the main thread is queued in.
                 main-thread-run-loop-modes
+                ;; Where the history file lives, or NIL for nowhere.
+                history-directory
                 ;; The restarts, on screen: build and show, take down, ask.
                 show-restarts-panel hide-restarts-panel restarts-panel-visible-p
                 ;; LISTENER-TEXT-VIEW's slot accessors.  The class is the front

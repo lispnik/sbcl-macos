@@ -32,6 +32,12 @@ A Lisp vector; INVOKE converts it to an NSArray of NSStrings on the way in.")
 
 (defun main-thread-run-loop-modes () +common-run-loop-modes+)
 
+(defun history-directory ()
+  "~/Library/Application Support/Lisp Listener/, which is where a Mac
+application keeps something it wrote for itself."
+  (merge-pathnames "Library/Application Support/Lisp Listener/"
+                   (user-homedir-pathname)))
+
 (defun transcript-color (kind)
   (ecase kind
     ((:output :input) (objc:invoke "NSColor" "textColor"))
