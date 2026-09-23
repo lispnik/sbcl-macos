@@ -112,4 +112,4 @@ ECL never signals a thread to collect garbage, so the question does not arise."
 ;;; Defined later in the core than the file that first calls them.  A :SERIAL
 ;;; system tolerates a forward reference; the compile check, which compiles each
 ;;; file on its own, reports one as a style warning without these.
-(declaim (ftype function refresh-paren-highlight))
+(declaim (ftype function refresh-paren-highlight clear-paren-highlight))

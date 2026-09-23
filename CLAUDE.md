@@ -342,6 +342,16 @@ Each of these is a bug that actually happened here.
   return two values, so they cannot be written with `OR` -- it keeps only the
   first, and the caret went to NIL.
 
+- **A character typed beside a tinted paren INHERITS the tint**, because a text
+  view takes its typing attributes from the character at the insertion point.
+  Those indices are not in the marks list, so clearing by remembered range left
+  them coloured: typing `(room` coloured `room`, and submitting carried the
+  colour up into the read-only transcript for good.
+  `clear-paren-highlight` therefore sweeps `NSBackgroundColorAttributeName` off
+  the **whole transcript**, and both front ends reset the typing attributes as
+  the caret moves. `submit-input` and `transcript-insert` clear before they
+  touch the text, while the ranges still mean something.
+
 - **The paren tint has to be re-applied, not preserved.** `replace-pending-input`
   and `replace-token` both reset the whole attribute dictionary over the input
   with `-setAttributes:range:`, and arriving output shifts every index, so both

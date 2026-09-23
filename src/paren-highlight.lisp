@@ -11,27 +11,36 @@
 ;;;; So the scan runs over PENDING-INPUT and every offset is relative to
 ;;;; INPUT-START.
 ;;;;
-;;;; Recomputed from scratch, never incrementally, and the ranges it marked last
-;;;; time are kept on the view so they can be cleared.  That is deliberate:
+;;;; Recomputed from scratch, never incrementally.  That is deliberate:
 ;;;; REPLACE-PENDING-INPUT and REPLACE-TOKEN both reset the attributes over
 ;;;; their whole range with -setAttributes:range:, and output arriving from the
 ;;;; listener thread shifts every index, so any attempt to keep a highlight
 ;;;; alive across an edit would be wrong about half the time.  Cheap enough:
 ;;;; one line of input, two one-character attribute writes.
+;;;;
+;;;; CLEARING SWEEPS THE WHOLE TRANSCRIPT, not the ranges last marked -- see
+;;;; CLEAR-PAREN-HIGHLIGHT for the bug that taught it.  The view still records
+;;;; what it tinted, which is what a test asks about.
 
 (in-package #:lisp-listener)
 
 (defun clear-paren-highlight (view pointer)
-  "Remove the tint from wherever it was last put.  Thread 1."
-  (let ((storage (transcript-storage pointer))
-        (length (transcript-length pointer)))
-    (dolist (range (view-paren-marks view))
-      ;; The text may have shrunk since: a range past the end is a range that
-      ;; no longer exists, and TextKit must not be handed it.
-      (when (and length (<= (+ (car range) (cdr range)) length))
-        (objc:invoke storage "removeAttribute:range:"
-                     (%ns-string-constant "NSBackgroundColorAttributeName")
-                     range))))
+  "Remove the tint from the WHOLE transcript.  Thread 1.
+
+Not just from the ranges last marked, and that is the fix for a bug worth
+remembering: a text view sets its typing attributes from the character at the
+insertion point, so a character typed next to a tinted paren INHERITS the tint.
+Those indices were never in the marks list, so clearing by range left them
+coloured -- type `(room' and `room' came out tinted, and submitting the line
+carried the colour up into the transcript for good.
+
+One message over one range, and nothing else in the transcript uses a
+background colour, so there is nothing to preserve."
+  (let ((length (transcript-length pointer)))
+    (when (and length (plusp length))
+      (objc:invoke (transcript-storage pointer) "removeAttribute:range:"
+                   (%ns-string-constant "NSBackgroundColorAttributeName")
+                   (cons 0 length))))
   (setf (view-paren-marks view) '())
   view)
 

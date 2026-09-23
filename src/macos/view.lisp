@@ -121,6 +121,11 @@ that they can be untinted.  Thread 1 only; see src/paren-highlight.lisp."))
 
 (define-listener-method ("textViewDidChangeSelection:" :void)
     ((notification objc:objc-object-pointer))
+  ;; The typing attributes first: AppKit takes them from the character at the
+  ;; insertion point, which may be a tinted paren, and then the next character
+  ;; typed arrives wearing the tint.  UIKit resets them on its own account and
+  ;; src/ios/view.lisp does the same thing for the same reason.
+  (apply-typing-attributes pointer)
   (refresh-paren-highlight self pointer))
 
 ;;; Paredit ---------------------------------------------------------------------

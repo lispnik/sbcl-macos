@@ -115,6 +115,12 @@ is where it belongs and where a terminal puts it."
            (at (view-input-start view))
            (pointer (objc:objc-object-pointer view))
            (caret (caret-index pointer)))
+      ;; UNTINTED BEFORE THE INSERT, not merely forgotten after it.  The ranges
+      ;; are still the right ones now; a moment later every index at or after
+      ;; the insertion has moved, and a mark that was only dropped from the list
+      ;; leaves its tint behind on text that has become transcript -- which is
+      ;; how a submitted line kept its highlighted parens for good.
+      (clear-paren-highlight view pointer)
       (objc:invoke storage "insertAttributedString:atIndex:" attributed at)
       (objc:release attributed)
       (incf (view-input-start view) length)
@@ -123,11 +129,7 @@ is where it belongs and where a terminal puts it."
       ;; where it was -- in front of the output, on the line the user was not
       ;; typing on.  So it is moved here only if the toolkit did not.
       (when (and caret (>= caret at) (eql (caret-index pointer) caret))
-        (objc:invoke pointer "setSelectedRange:" (cons (+ caret length) 0)))
-      ;; Every index at or after the insertion has moved, so the marks recorded
-      ;; for the old text are meaningless; the next selection change puts them
-      ;; back where they belong.
-      (setf (view-paren-marks view) '())))
+        (objc:invoke pointer "setSelectedRange:" (cons (+ caret length) 0)))))
   string)
 
 (defun transcript-append (view string kind)
@@ -187,6 +189,9 @@ The newline the user pressed goes into the transcript here rather than through
 -insertText:, and INPUT-START moves past it, so everything submitted becomes
 read-only in the same breath.  Nothing is echoed: it is already on screen."
   (let ((text (pending-input view pointer)))
+    ;; The tint goes with the line: what was the input region is transcript from
+    ;; here on, and a highlight there would sit on text nobody can edit.
+    (clear-paren-highlight view pointer)
     (transcript-append view (string #\Newline) :input)
     (setf (view-history-index view) nil)
     (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) text))
