@@ -332,6 +332,16 @@ Each of these is a bug that actually happened here.
   Stop pressed in the gap between a value and its prompt. `case-interrupt`
   covers both states, and it took a fifteen-run hammer to see the race.
 
+- **An UNMATCHED paren must be deletable, and `or` loses the offset.** Backspace
+  first refused every paren, which left a character that could only be removed
+  by clearing the line -- the unmatched one is the one that is wrong, and
+  deleting it is the fix. `delete-paren-p` asks `paren-match-offset` and refuses
+  only a matched one. Forward Delete goes by the same rule and is a **different
+  key**: `#\Rubout`, not `#\Backspace`, and on iOS the two are told apart by
+  whether the affected range starts at the caret or one before it. Both commands
+  return two values, so they cannot be written with `OR` -- it keeps only the
+  first, and the caret went to NIL.
+
 - **The paren tint has to be re-applied, not preserved.** `replace-pending-input`
   and `replace-token` both reset the whole attribute dictionary over the input
   with `-setAttributes:range:`, and arriving output shifts every index, so both

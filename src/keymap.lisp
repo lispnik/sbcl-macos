@@ -30,6 +30,7 @@ input region was before src/paredit.lisp existed.")
     (")"         . close-or-skip)
     ("\""        . insert-quote)
     ("Backspace" . delete-pair-backward)
+    ("Delete"    . delete-pair-forward)
     ("C-M-f"     . forward-sexp)
     ("C-M-b"     . backward-sexp)
     ("C-k"       . kill-sexp)
@@ -82,6 +83,10 @@ other key."
              (setf rest (subseq rest 2)))
             (t (return))))
     (cond ((string-equal rest "Backspace") (values modifiers #\Backspace))
+          ;; Forward delete.  #\Rubout, which is DEL and not #\Backspace: the
+          ;; two keys have to be told apart, since one deletes the character
+          ;; behind the caret and the other the one in front.
+          ((string-equal rest "Delete") (values modifiers #\Rubout))
           ((string-equal rest "Tab") (values modifiers #\Tab))
           ((= (length rest) 1) (values modifiers (char rest 0)))
           (t (values nil nil)))))

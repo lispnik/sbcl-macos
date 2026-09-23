@@ -353,12 +353,20 @@ key in that position on a keyboard attached to an iPad."
       ((string= string (string #\Newline))
        (submit-input self pointer)
        nil)
-      ;; A self-inserting paredit key -- ( ) " -- or Backspace, which arrives
-      ;; here as an empty replacement.  Answering NIL because the command has
-      ;; already made the edit.
+      ;; A self-inserting paredit key -- ( ) " -- or a deletion, which arrives
+      ;; here as an empty replacement over the character being removed.  Which
+      ;; character that is says whether it was Backspace or forward Delete:
+      ;; UIKit gives no other clue, and the two must not be confused, since one
+      ;; takes the character behind the caret and the other the one in front.
       ((and (input-edit-allowed-p self affected)
             (if (zerop (length string))
-                (paredit-handles-character-p self pointer #\Backspace)
+                (let ((caret (caret-index pointer)))
+                  (cond ((null caret) nil)
+                        ((= (car affected) (1- caret))
+                         (paredit-handles-character-p self pointer #\Backspace))
+                        ((= (car affected) caret)
+                         (paredit-handles-character-p self pointer #\Rubout))
+                        (t nil)))
                 (and (= 1 (length string))
                      (paredit-handles-character-p self pointer (char string 0)))))
        nil)

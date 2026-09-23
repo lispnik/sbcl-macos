@@ -157,6 +157,11 @@ that they can be untinted.  Thread 1 only; see src/paren-highlight.lisp."))
   (unless (paredit-handles-character-p self pointer #\Backspace)
     (objc:invoke (objc:current-super) "deleteBackward:" sender)))
 
+(define-listener-method ("deleteForward:" :void)
+    ((sender objc:objc-object-pointer))
+  (unless (paredit-handles-character-p self pointer #\Rubout)
+    (objc:invoke (objc:current-super) "deleteForward:" sender)))
+
 (defconstant +ns-event-modifier-control+ (ash 1 18))
 (defconstant +ns-event-modifier-option+ (ash 1 19))
 

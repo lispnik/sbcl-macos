@@ -50,26 +50,51 @@ paren -- which is what an unclosed form wants."
              (char= (char text offset) #\)))
     (values text (1+ offset))))
 
-(defun delete-pair-backward (text offset)
-  "Backspace over the open half of an empty pair takes both halves.
+(defun delete-paren-p (text position)
+  "How a deletion should treat the parenthesis at POSITION: :MATCHED, which
+means refuse, :UNMATCHED, which means let it go, or NIL when it is not a
+parenthesis at all.
 
-`()' and `\"\"' go whole.  A lone paren with content beside it is REFUSED --
-declining leaves the key to the toolkit, which would unbalance the line, so
-this answers the text unchanged instead and the front end stops there."
+An UNMATCHED paren must be deletable.  It is the one that is wrong -- the line
+is already unbalanced and deleting it is what fixes it -- so refusing there
+leaves a character that cannot be removed except by clearing the line, which is
+how the first version of this behaved and it was maddening."
+  (and (< -1 position (length text))
+       (member (char text position) '(#\( #\)))
+       (code-position-p text position)
+       (if (paren-match-offset text position) :matched :unmatched)))
+
+(defun delete-empty-pair (text offset)
+  "The two halves of the empty pair around OFFSET, deleted, or NIL."
+  (let ((before (and (plusp offset) (char text (1- offset))))
+        (after (and (< offset (length text)) (char text offset))))
+    (when (and before after
+               (or (and (char= before #\() (char= after #\)))
+                   (and (char= before #\") (char= after #\"))))
+      (values (concatenate 'string (subseq text 0 (1- offset))
+                           (subseq text (1+ offset)))
+              (1- offset)))))
+
+(defun delete-pair-backward (text offset)
+  "Backspace: an empty pair goes whole, a MATCHED paren is refused, and
+anything else -- an unmatched paren included -- is the toolkit's to delete.
+
+Refusing means answering the text unchanged, which the front end takes as
+handled and stops; declining means answering NIL, and the key does what it
+always did."
+  ;; MULTIPLE-VALUE-BIND, not OR: OR keeps only the first value, so the new
+  ;; offset was silently dropped and the caret went to NIL.
   (when (plusp offset)
-    (let ((before (char text (1- offset)))
-          (after (and (< offset (length text)) (char text offset))))
-      (cond
-        ;; An empty pair, caret in the middle: both go.
-        ((and after (or (and (char= before #\() (char= after #\)))
-                        (and (char= before #\") (char= after #\"))))
-         (values (concatenate 'string (subseq text 0 (1- offset))
-                              (subseq text (1+ offset)))
-                 (1- offset)))
-        ;; A paren that is holding something up: refuse, without unbalancing.
-        ((and (member before '(#\( #\))) (code-position-p text (1- offset)))
-         (values text offset))
-        (t nil)))))
+    (multiple-value-bind (new-text new-offset) (delete-empty-pair text offset)
+      (cond (new-text (values new-text new-offset))
+            ((eq :matched (delete-paren-p text (1- offset))) (values text offset))))))
+
+(defun delete-pair-forward (text offset)
+  "Forward delete, by the same rules as Backspace: an empty pair whole, a
+matched paren refused, an unmatched one deleted by the toolkit."
+  (multiple-value-bind (new-text new-offset) (delete-empty-pair text (1+ offset))
+    (cond (new-text (values new-text new-offset))
+          ((eq :matched (delete-paren-p text offset)) (values text offset)))))
 
 ;;; Motion ----------------------------------------------------------------------
 
@@ -120,7 +145,8 @@ this answers the text unchanged instead and the front end stops there."
     "Swap the sexp at the caret with the one after it."))
 
 (defparameter *paredit-commands*
-  '(insert-pair insert-quote close-or-skip delete-pair-backward
+  '(insert-pair insert-quote close-or-skip
+    delete-pair-backward delete-pair-forward
     forward-sexp backward-sexp
     kill-sexp wrap-round splice slurp-forward barf-forward
     slurp-backward barf-backward raise-sexp transpose-sexps)

@@ -496,8 +496,24 @@ leaves the caret as much as on the text -- and a test that says
   (check-edit 'delete-pair-backward "(list (|)" "(list |" "Backspace takes an empty pair whole")
   (check-edit 'delete-pair-backward "(list \"|\"" "(list |" "and an empty string whole")
   (check-edit 'delete-pair-backward "(list (a)|" "(list (a)|"
-              "Backspace over a paren holding something up refuses")
+              "Backspace over a MATCHED paren refuses")
+  ;; The unmatched one is the whole point: the line is already unbalanced, and
+  ;; deleting that paren is what fixes it.  Declining hands the key back to the
+  ;; toolkit, which deletes the character in the ordinary way.
+  (check-edit 'delete-pair-backward "(list (a|" :declined
+              "Backspace over an UNMATCHED open paren is allowed")
+  (check-edit 'delete-pair-backward "list a)|" :declined
+              "and over an unmatched close paren too")
   (check-edit 'delete-pair-backward "(list a|" :declined
+              "and over an ordinary character it declines")
+  ;; Forward delete, by the same rules.
+  (check-edit 'delete-pair-forward "(list |()" "(list |" "Delete takes an empty pair whole")
+  (check-edit 'delete-pair-forward "(list |(a))" "(list |(a))"
+              "Delete over a matched paren refuses")
+  ;; "(list (a" -- the inner open paren has no partner, so it may go.
+  (check-edit 'delete-pair-forward "(list |(a" :declined
+              "Delete over an unmatched paren is allowed")
+  (check-edit 'delete-pair-forward "(list |a)" :declined
               "and over an ordinary character it declines")
   ;; Motion leaves the text alone.
   (check-edit 'forward-sexp "|(a b) c" "(a b)| c" "forward-sexp steps over a form")
@@ -530,6 +546,9 @@ leaves the caret as much as on the text -- and a test that says
   (check (paredit-self-insert-key-p "(") "( is a self-inserting key")
   (check (not (paredit-self-insert-key-p "C-k")) "and C-k is not")
   (check (eq 'insert-pair (paredit-command-for #\( '())) "( is bound to INSERT-PAIR")
+  (check (and (eq 'delete-pair-backward (paredit-command-for #\Backspace '()))
+              (eq 'delete-pair-forward (paredit-command-for #\Rubout '())))
+         "Backspace and Delete are told apart")
   (check (eq 'slurp-forward (paredit-command-for #\) '(:control)))
          "and C-) to SLURP-FORWARD")
   (check (null (paredit-command-for #\) '(:meta))) "M-) is bound to nothing")
