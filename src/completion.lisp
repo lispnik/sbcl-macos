@@ -32,6 +32,14 @@
   (loop for char across string
         sum (if (> (char-code char) #xFFFF) 2 1)))
 
+(defun utf-16-offset->index (string offset)
+  "The index into STRING of the character OFFSET UTF-16 units in."
+  (loop with units = 0
+        for index from 0 below (length string)
+        while (< units offset)
+        do (incf units (if (> (char-code (char string index)) #xFFFF) 2 1))
+        finally (return index)))
+
 (defun completion-case (typed name)
   "NAME as the user would have typed it: lower case, unless they typed upper
 case themselves or the name is not all upper case to begin with."
@@ -88,7 +96,7 @@ Escape after a space would otherwise offer every symbol in the package."
   (and (plusp (length token))
        (symbol-completions token (listener-completion-package *listener*))))
 
-(defun replace-token (pointer range string)
+(defun replace-token (view pointer range string)
   "Replace RANGE with STRING, as input, and put the caret after it."
   (let ((storage (transcript-storage pointer))
         (start (car range)))
@@ -97,7 +105,8 @@ Escape after a space would otherwise offer every symbol in the package."
       (objc:invoke storage "setAttributes:range:"
                    (transcript-attributes :input) (cons start (- end start)))
       (objc:invoke pointer "setSelectedRange:" (cons end 0))
-      (objc:invoke pointer "scrollRangeToVisible:" (cons end 0))))
+      (objc:invoke pointer "scrollRangeToVisible:" (cons end 0))
+      (refresh-paren-highlight view pointer)))
   string)
 
 ;;; Completing without a popup -----------------------------------------------
@@ -124,10 +133,10 @@ complete or nothing it could be."
            (prefix (common-prefix candidates)))
       (cond ((null candidates) nil)
             ((null (rest candidates))
-             (replace-token pointer range (first candidates))
+             (replace-token view pointer range (first candidates))
              :inserted)
             ((> (length prefix) (length token))
-             (replace-token pointer range prefix)
+             (replace-token view pointer range prefix)
              :extended)
             (t
              (list-completions view candidates)

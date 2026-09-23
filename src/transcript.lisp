@@ -123,7 +123,11 @@ is where it belongs and where a terminal puts it."
       ;; where it was -- in front of the output, on the line the user was not
       ;; typing on.  So it is moved here only if the toolkit did not.
       (when (and caret (>= caret at) (eql (caret-index pointer) caret))
-        (objc:invoke pointer "setSelectedRange:" (cons (+ caret length) 0)))))
+        (objc:invoke pointer "setSelectedRange:" (cons (+ caret length) 0)))
+      ;; Every index at or after the insertion has moved, so the marks recorded
+      ;; for the old text are meaningless; the next selection change puts them
+      ;; back where they belong.
+      (setf (view-paren-marks view) '())))
   string)
 
 (defun transcript-append (view string kind)
@@ -170,7 +174,10 @@ neither has anything useful to do here."
       (when (plusp new-length)
         (objc:invoke storage "setAttributes:range:"
                      (transcript-attributes :input) (cons start new-length))))
-    (scroll-to-end pointer))
+    (scroll-to-end pointer)
+    ;; -setAttributes:range: above replaced the whole dictionary over the input,
+    ;; tint included, so the highlight is put back rather than preserved.
+    (refresh-paren-highlight view pointer))
   string)
 
 (defun submit-input (view pointer)

@@ -51,7 +51,9 @@
   ;; iOS's on ECL.  Nothing here reaches either -- they are stubs all the way
   ;; down -- but loading the one that ships on this Lisp keeps it honest.
   (dolist (name (append '("package" "impl" "main-thread" "queue" "listener"
-                          "history" "transcript" "completion" "streams"
+                          "history" "sexp" "paredit" "keymap" "transcript"
+                          "completion" "paren-highlight" "paredit-view" "streams"
+                          "config"
                           "restarts" "repl")
                         #+sbcl '("macos/view" "macos/window" "macos/restarts-panel"
                                  "macos/screenshot" "macos/app")
@@ -432,6 +434,151 @@ window belonging to a listener that had already gone."
            (check (null (listener-for-view-object nil)) "nor for a NIL view"))
       (setf *listeners* '() *listener* nil))))
 
+(defun check-edit (command before after label)
+  "Run COMMAND on BEFORE, where | marks the caret, and compare with AFTER.
+
+The caret is written into the strings because a command is judged on where it
+leaves the caret as much as on the text -- and a test that says
+\"(list |)\" reads like the thing it is testing."
+  (let* ((offset (position #\| before))
+         (text (remove #\| before)))
+    (multiple-value-bind (new-text new-offset)
+        (run-paredit-command command text offset)
+      (let ((got (if new-text
+                     (concatenate 'string (subseq new-text 0 new-offset) "|"
+                                  (subseq new-text new-offset))
+                     :declined)))
+        (check (equal got after) "~a: ~s => ~s" label before got)))))
+
+(defun case-sexp ()
+  "The scanner: what is code, what matches what."
+  (format t "~&~%Sexp scanning: parens, and the ones that only look like parens.~%")
+  (finish-output)
+  ;; 0123456789
+  ;; (list (a))
+  (check (= 9 (paren-match-offset "(list (a))" 0)) "the outer open matches the outer close")
+  (check (= 0 (paren-match-offset "(list (a))" 9)) "and the outer close matches back")
+  (check (= 8 (paren-match-offset "(list (a))" 6)) "the inner pair matches too")
+  ;; A paren inside a string, a comment or a character literal is not a paren.
+  (check (null (paren-match-offset "(a \"(\"" 0))
+         "an open paren inside a string does not close the form")
+  (check (= 7 (paren-match-offset "(a \"(\" )" 0))
+         "and the real close is still found past it")
+  ;; (a #\( ) ; )   -- the ( at 5 is a character literal, and the ) at 11 is
+  ;; inside a comment, so the form closes at 7 and nowhere else.
+  (check (= 7 (paren-match-offset "(a #\\( ) ; )" 0))
+         "a character literal is not a paren, and neither is one in a comment")
+  (check (not (code-position-p "(a \"x(\"" 5)) "inside a string is not code")
+  (check (not (code-position-p "(a ; x(" 6)) "inside a comment is not code")
+  (check (not (code-position-p "(a #\\(" 5)) "a character literal is not code")
+  (check (code-position-p "(a b)" 3) "ordinary code is")
+  ;; Spans and bounds.
+  (multiple-value-bind (start end) (sexp-bounds "(list (a) b)" 7)
+    (check (and (= start 6) (= end 9)) "the innermost form containing an offset"))
+  (multiple-value-bind (start end) (sexp-span-at "  (a b) c" 0)
+    (check (and (= start 2) (= end 7)) "a span skips leading whitespace"))
+  (multiple-value-bind (start end) (sexp-span-at "'(a) b" 0)
+    (check (and (= start 0) (= end 4)) "a reader prefix belongs to the span"))
+  (check (equal '((1 . 2) (3 . 4)) (sexp-spans "(a b)" 1 4))
+         "the children of a list are its spans"))
+
+(defun case-paredit ()
+  "The commands, each judged on the text and the caret it leaves."
+  (format t "~&~%Paredit: balanced insertion, motion, and structure.~%")
+  (finish-output)
+  ;; Balanced insertion.
+  (check-edit 'insert-pair "(list |" "(list (|)" "( inserts a pair")
+  (check-edit 'insert-pair "(list \"a|\"" :declined "( inside a string is just a paren")
+  (check-edit 'insert-quote "(list |" "(list \"|\"" "\" inserts a pair")
+  (check-edit 'close-or-skip "(list (a|)" "(list (a)|" ") steps over the close paren")
+  (check-edit 'close-or-skip "(list (a|" :declined
+              ") with nothing to step over declines, so the paren is typed")
+  (check-edit 'delete-pair-backward "(list (|)" "(list |" "Backspace takes an empty pair whole")
+  (check-edit 'delete-pair-backward "(list \"|\"" "(list |" "and an empty string whole")
+  (check-edit 'delete-pair-backward "(list (a)|" "(list (a)|"
+              "Backspace over a paren holding something up refuses")
+  (check-edit 'delete-pair-backward "(list a|" :declined
+              "and over an ordinary character it declines")
+  ;; Motion leaves the text alone.
+  (check-edit 'forward-sexp "|(a b) c" "(a b)| c" "forward-sexp steps over a form")
+  (check-edit 'backward-sexp "(a b) c|" "(a b) |c" "backward-sexp steps back over one")
+  ;; Structure.
+  (check-edit 'kill-sexp "(list |(a b) c)" "(list |c)" "kill-sexp takes the form at the caret")
+  (check-edit 'wrap-round "(list| a)" "(|(list a))"
+              "wrap-round adds a pair around the form, caret inside the new one")
+  (check-edit 'splice "(list (a| b))" "(list a| b)" "splice removes the parens around it")
+  (check-edit 'slurp-forward "(list (a|) b)" "(list (a| b))" "slurp pulls the next form in")
+  (check-edit 'barf-forward "(list (a b|))" "(list (a) |b)" "barf pushes the last form out")
+  ;; And the ones that are reachable but unbound by default.
+  (check-edit 'raise-sexp "(list (a|))" "|(a)" "raise-sexp replaces the enclosing form")
+  (check-edit 'transpose-sexps "(list |a b)" "(list b |a)" "transpose swaps two siblings"))
+
+(defun case-keymap ()
+  "The keymap: parsing a spec, and rebinding one."
+  (format t "~&~%Keymap: specs, lookup, and rebinding.~%")
+  (finish-output)
+  (multiple-value-bind (modifiers character) (parse-key-spec "C-)")
+  (check (and (equal modifiers '(:control)) (char= character #\)))
+         "C-) parses as Control and the character"))
+  (multiple-value-bind (modifiers character) (parse-key-spec "C-M-f")
+    (check (and (= 2 (length modifiers)) (member :meta modifiers) (char= character #\f))
+           "C-M-f parses as both modifiers"))
+  (multiple-value-bind (modifiers character) (parse-key-spec "Backspace")
+    (check (and (null modifiers) (char= character #\Backspace))
+           "Backspace parses as its character"))
+  (check (null (nth-value 1 (parse-key-spec "nonsense"))) "and nonsense parses as nothing")
+  (check (paredit-self-insert-key-p "(") "( is a self-inserting key")
+  (check (not (paredit-self-insert-key-p "C-k")) "and C-k is not")
+  (check (eq 'insert-pair (paredit-command-for #\( '())) "( is bound to INSERT-PAIR")
+  (check (eq 'slurp-forward (paredit-command-for #\) '(:control)))
+         "and C-) to SLURP-FORWARD")
+  (check (null (paredit-command-for #\) '(:meta))) "M-) is bound to nothing")
+  ;; Rebinding, and putting it back.
+  (let ((original (copy-tree *paredit-keys*)))
+    (unwind-protect
+         (progn
+           (setf (paredit-key "C-M-t") 'transpose-sexps)
+           (check (eq 'transpose-sexps (paredit-command-for #\t '(:control :meta)))
+                  "a new binding takes effect at once")
+           (setf (paredit-key "C-M-t") nil)
+           (check (null (paredit-command-for #\t '(:control :meta)))
+                  "and NIL unbinds it")
+           (check (null (ignore-errors (setf (paredit-key "C-M-z") 'no-such-command)))
+                  "a command that does not exist is refused"))
+      (setf *paredit-keys* original)))
+  ;; The switch covers every key.
+  (let ((*paredit-enabled* nil))
+    (check (null (paredit-command-for #\( '()))
+           "with paredit off, nothing is bound at all")))
+
+(defun case-init-file ()
+  "init.lisp: loaded at startup, and never fatal."
+  (format t "~&~%Init file: read at startup, and a broken one does not stop it.~%")
+  (finish-output)
+  (let* ((directory (merge-pathnames
+                     (format nil "lisp-listener-init-~d/" (get-universal-time))
+                     (uiop:temporary-directory)))
+         (*history-directory* directory)
+         (*paren-highlight-enabled* t))
+    (unwind-protect
+         (progn
+           (check (eq :none (load-init-file)) "no init file is not a failure")
+           (ensure-directories-exist directory)
+           (with-open-file (stream (init-file) :direction :output
+                                               :if-exists :supersede)
+             (write-string "(setf *paren-highlight-enabled* nil)" stream))
+           (check (eq :loaded (load-init-file)) "an init file is loaded")
+           (check (null *paren-highlight-enabled*) "and what it sets is set")
+           (with-open-file (stream (init-file) :direction :output
+                                               :if-exists :supersede)
+             (write-string "(error \"deliberate\")" stream))
+           (let ((outcome (load-init-file)))
+             (check (and (consp outcome) (eq :failed (car outcome)))
+                    "a broken one reports rather than signals")
+             (check (search "deliberate" (cdr outcome))
+                    "and says what went wrong")))
+      (ignore-errors (uiop:delete-directory-tree directory :validate t)))))
+
 (defun case-history ()
   "The history is saved as each line is submitted, and read back at the next
 launch.
@@ -537,6 +684,7 @@ bound away from the front end's own -- a test has no business writing into
                 case-toplevel-restart-index
                 case-interactive-restarts-are-marked
                 case-two-listeners case-nil-is-nobody case-history case-completion
+                case-sexp case-paredit case-keymap case-init-file
                 case-prompt-is-recorded))
   (funcall case))
 

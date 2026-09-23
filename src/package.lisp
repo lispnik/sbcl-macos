@@ -35,6 +35,11 @@
    ;; Control.
    #:abort-evaluation
    #:clear-transcript
+   #:*paredit-enabled*
+   #:*paredit-keys*
+   #:paredit-key
+   #:*paredit-commands*
+   #:*paren-highlight-enabled*
    #:*restarts-panel-enabled*
    #:*backtrace-enabled*
    #:*backtrace-frames*

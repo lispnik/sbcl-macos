@@ -126,8 +126,9 @@ appears. That falls out of the design rather than being arranged.
 Three systems in `lisp-listener.asd`, each `:serial t`, and **the component
 order is load-bearing**:
 
-- `lisp-listener/core` — `src/`: `package impl main-thread queue listener
-  transcript completion streams restarts repl`. No toolkit; SBCL and ECL.
+- `lisp-listener/core` — `src/`: `package impl main-thread queue listener history
+  sexp paredit keymap transcript completion paren-highlight paredit-view streams
+  config restarts repl`. No toolkit; SBCL and ECL.
 - `lisp-listener` — the core plus `src/macos/`: `view window restarts-panel
   screenshot app`. The name it always had.
 - `lisp-listener/ios` — the core plus `src/ios/`: `view restarts-sheet app`.
@@ -152,6 +153,23 @@ NSTextView and UITextView share.
   `save-lisp-and-die` and the bundle is a dumped core.
 - `src/transcript.lisp` — the transcript primitives over either text view, and
   the `define-listener-method` macro (every IMP wrapped in `handler-case`).
+- `src/sexp.lisp` — the sexp scanner, **copied from `revl`** (lispnik's own MIT
+  editor) and renamed: paren matching and the structural edits, over a string and
+  a character offset. It knows about strings, `;` comments and `#\(`; it does not
+  know `[`, `{`, `#|…|#` or `|symbols|`. The two copies are now separate.
+- `src/paredit.lisp` — the commands, each `(text offset) → (values text offset)`
+  or NIL to decline. Balanced insertion is written here; the structural ones wrap
+  `apply-structural-edit`. Pure, so `make test` covers all of it.
+- `src/keymap.lisp` — `*paredit-enabled*`, `*paren-highlight-enabled*` and
+  `*paredit-keys*`, an alist of key spec (`"("`, `"C-)"`, `"C-M-f"`,
+  `"Backspace"`) to command. `(setf (paredit-key "C-(") 'slurp-backward)` rebinds;
+  a command not in `*paredit-commands*` is refused.
+- `src/paredit-view.lisp` — the one place a command meets a view: character
+  offsets to UTF-16 units, the read-only guard, the write-back.
+- `src/paren-highlight.lisp` — the tint under the caret's paren and its partner,
+  red when it has none. Input region only.
+- `src/config.lisp` — `init.lisp`, read from `history-directory` at startup, so a
+  rebinding survives a launch. A broken one is reported, never fatal.
 - `src/completion.lisp` — symbol completion, from the listener's package, which
   `emit-prompt` publishes in the `listener-package` slot because thread 1 cannot
   see the thread's `*package*`. It also has `complete-at-caret`, the shell-style
@@ -313,6 +331,28 @@ Each of these is a bug that actually happened here.
   be left for a later read to trip over, and clearing it at the prompt lost a
   Stop pressed in the gap between a value and its prompt. `case-interrupt`
   covers both states, and it took a fifteen-run hammer to see the race.
+
+- **The paren tint has to be re-applied, not preserved.** `replace-pending-input`
+  and `replace-token` both reset the whole attribute dictionary over the input
+  with `-setAttributes:range:`, and arriving output shifts every index, so both
+  call `refresh-paren-highlight` afterwards and `transcript-insert` drops the
+  marks. Trying to keep a highlight alive across an edit is wrong about half the
+  time.
+
+- **On iOS, `-insertText:` called programmatically does not consult the
+  delegate.** So it walks straight past the paredit hook in
+  `-textView:shouldChangeTextInRange:replacementText:`, and a self-test that
+  typed with it reported that `(` did not auto-close when in fact it does.
+  UIKit's own contract is to ask the delegate and insert only on true, which is
+  what `type-into-view` now does.
+
+- **macOS chords need `-keyDown:`; everything else does not.** `C-)`, `M-(` and
+  `C-M-f` are bound to no standard selector, so they arrive nowhere else. The
+  override claims only what the keymap has and calls super otherwise, which is
+  what keeps Return, Tab, the arrows and Escape arriving at their own IMPs
+  through `-interpretKeyEvents:`. Self-inserting characters belong in
+  `-insertText:replacementRange:` instead, the only hook that sees which
+  character it is.
 
 - **Output inserted at the caret must carry the caret along.** NSTextView
   moves a caret that sits at the insertion point; UITextView leaves it behind,

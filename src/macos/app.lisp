@@ -113,7 +113,12 @@ try to reach thread 1 before there is a view to deliver the hop to."
   ;; PREVIOUS IMAGE, which is a question asked once per process; emptying it
   ;; again under a listener already on screen would throw away attributes its
   ;; transcript is still being written with.
-  (unless *listeners* (reset-transcript-attributes))
+  (unless *listeners*
+    (reset-transcript-attributes)
+    ;; Before the thread starts, so that what it sets -- the keymap, the font --
+    ;; is in force from the banner onwards.  Only for the first listener: a
+    ;; second window must not run somebody's init file again.
+    (load-init-file))
   (objc.runloop:shared-application :activation-policy activation-policy)
   (let ((listener (make-listener))
         (restarts (make-instance 'restarts-controller)))
@@ -130,6 +135,7 @@ try to reach thread 1 before there is a view to deliver the hop to."
     (show-listener-window listener)
     (warm-selectors listener)
     (start-listener-thread listener)
+    (report-init-file listener)
     ;; The banner was written before there was anywhere to put it.
     (force-output (listener-output listener))
     listener))

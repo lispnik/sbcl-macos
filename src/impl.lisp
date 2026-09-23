@@ -95,6 +95,10 @@ ECL never signals a thread to collect garbage, so the question does not arise."
                 main-thread-run-loop-modes
                 ;; Where the history file lives, or NIL for nowhere.
                 history-directory
+                ;; The tint for a matched (:MATCH) or unmatched (:MISMATCH)
+                ;; parenthesis, and the chance to rebuild cached key commands
+                ;; after *PAREDIT-KEYS* changes.
+                paren-background-color invalidate-key-commands
                 ;; The restarts, on screen: build and show, take down, ask.
                 show-restarts-panel hide-restarts-panel restarts-panel-visible-p
                 ;; LISTENER-TEXT-VIEW's slot accessors.  The class is the front
@@ -102,4 +106,10 @@ ECL never signals a thread to collect garbage, so the question does not arise."
                 ;; the transcript in the core reads and writes its slots.
                 view-input-start (setf view-input-start)
                 view-history (setf view-history)
-                view-history-index (setf view-history-index)))
+                view-history-index (setf view-history-index)
+                view-paren-marks (setf view-paren-marks)))
+
+;;; Defined later in the core than the file that first calls them.  A :SERIAL
+;;; system tolerates a forward reference; the compile check, which compiles each
+;;; file on its own, reports one as a style warning without these.
+(declaim (ftype function refresh-paren-highlight))

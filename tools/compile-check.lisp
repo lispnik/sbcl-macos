@@ -42,8 +42,9 @@
 
 ;;; The orders are lisp-listener.asd's, which are :SERIAL.
 (defparameter *core*
-  '("package" "impl" "main-thread" "queue" "listener" "history" "transcript"
-    "completion" "streams" "restarts" "repl"))
+  '("package" "impl" "main-thread" "queue" "listener" "history" "sexp" "paredit"
+    "keymap" "transcript" "completion" "paren-highlight" "paredit-view" "streams" "config"
+    "restarts" "repl"))
 
 (defparameter *front-ends*
   '(("macos" "macos/view" "macos/window" "macos/restarts-panel"

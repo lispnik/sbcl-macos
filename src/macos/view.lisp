@@ -47,6 +47,18 @@ application keeps something it wrote for itself."
     (:note (objc:invoke "NSColor" "secondaryLabelColor"))))
 
 
+(defun paren-background-color (kind)
+  "The tint behind a parenthesis: a quiet grey for a matched pair, red for one
+with no partner.  System colours, so both follow the appearance."
+  (ecase kind
+    (:match (objc:invoke "NSColor" "unemphasizedSelectedTextBackgroundColor"))
+    (:mismatch (objc:invoke (objc:invoke "NSColor" "systemRedColor")
+                            "colorWithAlphaComponent:" 0.35d0))))
+
+(defun invalidate-key-commands ()
+  "Nothing to do on the Mac: -keyDown: reads *PAREDIT-KEYS* on every key."
+  nil)
+
 (defun transcript-font (size)
   (objc:invoke "NSFont" "monospacedSystemFontOfSize:weight:" size 0d0))
 
@@ -60,7 +72,10 @@ begins.  UTF-16 units, thread 1 only.")
             :documentation "Submitted lines, newest first.")
    (history-index :initform nil :accessor view-history-index
                   :documentation "How far back RECALL-HISTORY has gone, or NIL
-while a fresh line is being typed."))
+while a fresh line is being typed.")
+   (paren-marks :initform '() :accessor view-paren-marks
+                :documentation "The ranges the paren highlight last tinted, so
+that they can be untinted.  Thread 1 only; see src/paren-highlight.lisp."))
   (:objc-class-name "LispListenerView")
   (:objc-superclass-name "NSTextView"))
 
@@ -104,6 +119,70 @@ while a fresh line is being typed."))
 (define-listener-method ("acceptsFirstResponder" objc:objc-bool :on-error t) ()
   t)
 
+(define-listener-method ("textViewDidChangeSelection:" :void)
+    ((notification objc:objc-object-pointer))
+  (refresh-paren-highlight self pointer))
+
+;;; Paredit ---------------------------------------------------------------------
+;;;
+;;; Three hooks, and the division between them is AppKit's, not ours:
+;;;
+;;;   -insertText:replacementRange: is where a SELF-INSERTING character arrives,
+;;;   and the only hook that can see which character it is.  ( ) and " are
+;;;   handled here.
+;;;
+;;;   -deleteBackward: is Backspace, which has a standard selector of its own.
+;;;
+;;;   -keyDown: is for the CHORDS -- C-) M-( C-M-f -- which AppKit's key
+;;;   bindings map to nothing at all, so no standard selector is ever sent.  It
+;;;   calls super for everything it does not claim, which is what keeps Return,
+;;;   Tab, the arrows and Escape arriving at the IMPs above: they come through
+;;;   -interpretKeyEvents:, which is what super does.  Overriding -keyDown: to
+;;;   do more than this would put us in front of dead keys and input methods.
+;;;
+;;; Each falls through to super when paredit is off, when the caret is above the
+;;; prompt, or when the command declines -- so a key never does nothing.
+
+(define-listener-method ("insertText:replacementRange:" :void)
+    ((text objc:objc-object-pointer)
+     (range cocoa:ns-range))
+  (let ((string (ignore-errors (objc:ns-string-to-string text))))
+    (unless (and string
+                 (= 1 (length string))
+                 (paredit-handles-character-p self pointer (char string 0)))
+      (objc:invoke (objc:current-super) "insertText:replacementRange:" text range))))
+
+(define-listener-method ("deleteBackward:" :void)
+    ((sender objc:objc-object-pointer))
+  (unless (paredit-handles-character-p self pointer #\Backspace)
+    (objc:invoke (objc:current-super) "deleteBackward:" sender)))
+
+(defconstant +ns-event-modifier-control+ (ash 1 18))
+(defconstant +ns-event-modifier-option+ (ash 1 19))
+
+(defun event-modifiers (event)
+  "The subset of an NSEvent's modifiers paredit binds: Control, and Option as
+Meta -- which is what a Mac keyboard offers for M-."
+  (let ((flags (objc:invoke event "modifierFlags"))
+        (modifiers '()))
+    (when (plusp (logand flags +ns-event-modifier-control+))
+      (push :control modifiers))
+    (when (plusp (logand flags +ns-event-modifier-option+))
+      (push :meta modifiers))
+    modifiers))
+
+(define-listener-method ("keyDown:" :void)
+    ((event objc:objc-object-pointer))
+  (let* ((modifiers (event-modifiers event))
+         (characters (and modifiers
+                          (ignore-errors
+                           (objc:ns-string-to-string
+                            (objc:invoke event "charactersIgnoringModifiers"))))))
+    (unless (and characters
+                 (= 1 (length characters))
+                 (paredit-handles-character-p self pointer (char characters 0) modifiers))
+      (objc:invoke (objc:current-super) "keyDown:" event))))
+
 ;;; Completion ------------------------------------------------------------------
 ;;;
 ;;; NSTextView already has completion: -complete: asks the view for the range
@@ -125,7 +204,7 @@ while a fresh line is being typed."))
       (cond ((null token)
              (objc:invoke (objc:current-super) "insertTab:" sender))
             ((and candidates (null (rest candidates)))
-             (replace-token pointer range (first candidates)))
+             (replace-token self pointer range (first candidates)))
             (t
              (objc:invoke (objc:current-super) "complete:" sender))))))
 

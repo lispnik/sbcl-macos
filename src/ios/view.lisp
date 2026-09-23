@@ -49,6 +49,14 @@ long on a first run."
 (defun transcript-font (size)
   (objc:invoke "UIFont" "monospacedSystemFontOfSize:weight:" size 0d0))
 
+(defun paren-background-color (kind)
+  "The tint behind a parenthesis: a quiet fill for a matched pair, red for one
+with no partner."
+  (ecase kind
+    (:match (objc:invoke "UIColor" "systemFillColor"))
+    (:mismatch (objc:invoke (objc:invoke "UIColor" "systemRedColor")
+                            "colorWithAlphaComponent:" 0.35d0))))
+
 (defparameter +ios-run-loop-modes+
   #("NSDefaultRunLoopMode" "UITrackingRunLoopMode")
   "The default mode, and the one the main thread runs while a scroll view is
@@ -68,7 +76,10 @@ begins.  UTF-16 units, thread 1 only.")
             :documentation "Submitted lines, newest first.")
    (history-index :initform nil :accessor view-history-index
                   :documentation "How far back RECALL-HISTORY has gone, or NIL
-while a fresh line is being typed."))
+while a fresh line is being typed.")
+   (paren-marks :initform '() :accessor view-paren-marks
+                :documentation "The ranges the paren highlight last tinted, so
+that they can be untinted.  Thread 1 only; see src/paren-highlight.lisp."))
   (:objc-class-name "LispListenerView")
   (:objc-superclass-name "UITextView")
   (:objc-protocols "UITextViewDelegate"))
@@ -81,6 +92,8 @@ while a fresh line is being typed."))
 (defconstant +ui-text-spell-checking-no+ 1)
 (defconstant +ui-keyboard-ascii-capable+ 1)
 (defconstant +ui-key-modifier-command+ #x100000)
+(defconstant +ui-key-modifier-control+ #x40000)
+(defconstant +ui-key-modifier-alternate+ #x80000)
 (defconstant +ui-view-flexible-width+ 2)
 
 (defun make-listener-view ()
@@ -220,14 +233,6 @@ UITextView gives up once the arrow keys are claimed for the history."
           (objc:invoke pointer "setSelectedRange:"
                        (cons (+ start (utf-16-length (subseq text 0 target))) 0)))))))
 
-(defun utf-16-offset->index (string offset)
-  "The index into STRING of the character OFFSET UTF-16 units in."
-  (loop with units = 0
-        for index from 0 below (length string)
-        while (< units offset)
-        do (incf units (if (> (char-code (char string index)) #xFFFF) 2 1))
-        finally (return index)))
-
 ;;; Hardware key commands --------------------------------------------------------
 
 (defvar *key-commands* nil
@@ -259,7 +264,43 @@ time: a pointer made at load time would not survive into the app.")
                              (key-command "k" "listenerClear:"
                                           +ui-key-modifier-command+)))
                 (objc:invoke array "addObject:" command))
+              ;; And one per CHORD in *PAREDIT-KEYS*.  The bare characters are
+              ;; not here: they arrive as text, through the delegate below.
+              (dolist (spec (mapcar #'car *paredit-keys*))
+                (unless (paredit-self-insert-key-p spec)
+                  (multiple-value-bind (modifiers character) (parse-key-spec spec)
+                    (when character
+                      (objc:invoke array "addObject:"
+                                   (key-command (string character) "listenerParedit:"
+                                                (ui-modifier-flags modifiers)))))))
               (objc:retain array)))))
+
+(defun invalidate-key-commands ()
+  "Forget the built array, so a rebinding is picked up.
+
+UIKit asks -keyCommands again as it rebuilds the responder chain's command
+list, which happens whenever the first responder changes -- so this is enough,
+without telling UIKit anything."
+  (let ((array *key-commands*))
+    (setf *key-commands* nil)
+    (when (and array (cffi:pointerp array)) (objc:release array)))
+  nil)
+
+(defun ui-modifier-flags (modifiers)
+  "Our :CONTROL and :META as UIKeyModifierFlags.  Meta is Alternate: it is the
+key in that position on a keyboard attached to an iPad."
+  (let ((flags 0))
+    (when (member :control modifiers) (setf flags (logior flags +ui-key-modifier-control+)))
+    (when (member :meta modifiers) (setf flags (logior flags +ui-key-modifier-alternate+)))
+    flags))
+
+(defun key-command-modifiers (command)
+  "A UIKeyCommand's modifier flags, back as our own list."
+  (let ((flags (objc:invoke command "modifierFlags"))
+        (modifiers '()))
+    (when (plusp (logand flags +ui-key-modifier-control+)) (push :control modifiers))
+    (when (plusp (logand flags +ui-key-modifier-alternate+)) (push :meta modifiers))
+    modifiers))
 
 ;;; The Objective-C methods ---------------------------------------------------
 
@@ -287,6 +328,15 @@ time: a pointer made at load time would not survive into the app.")
 (define-listener-method ("listenerClear:" :void) ((sender objc:objc-object-pointer))
   (clear-transcript *listener*))
 
+;;; One IMP for every paredit chord: the UIKeyCommand says which key it was, so
+;;; the keymap can be consulted exactly as the Mac's -keyDown: does.
+(define-listener-method ("listenerParedit:" :void) ((command objc:objc-object-pointer))
+  (let ((input (ignore-errors (objc:ns-string-to-string
+                               (objc:invoke command "input")))))
+    (when (and input (= 1 (length input)))
+      (paredit-handles-character-p self pointer (char input 0)
+                                   (key-command-modifiers command)))))
+
 ;;; The delegate.  Return is a "\n" replacing the selection: submit instead,
 ;;; and refuse the edit, since SUBMIT-INPUT appends the newline itself.  Any
 ;;; other edit is allowed only in the input region.  On an error the edit is
@@ -297,10 +347,24 @@ time: a pointer made at load time would not survive into the app.")
     ((text-view objc:objc-object-pointer)
      (affected cocoa:ns-range)
      (replacement objc:objc-object-pointer))
-  (if (string= (objc:ns-string-to-string replacement) (string #\Newline))
-      (progn (submit-input self pointer) nil)
-      (input-edit-allowed-p self affected)))
+  (let ((string (objc:ns-string-to-string replacement)))
+    (cond
+      ;; Return submits; SUBMIT-INPUT appends the newline itself.
+      ((string= string (string #\Newline))
+       (submit-input self pointer)
+       nil)
+      ;; A self-inserting paredit key -- ( ) " -- or Backspace, which arrives
+      ;; here as an empty replacement.  Answering NIL because the command has
+      ;; already made the edit.
+      ((and (input-edit-allowed-p self affected)
+            (if (zerop (length string))
+                (paredit-handles-character-p self pointer #\Backspace)
+                (and (= 1 (length string))
+                     (paredit-handles-character-p self pointer (char string 0)))))
+       nil)
+      (t (input-edit-allowed-p self affected)))))
 
 (define-listener-method ("textViewDidChangeSelection:" :void)
     ((text-view objc:objc-object-pointer))
-  (apply-typing-attributes pointer))
+  (apply-typing-attributes pointer)
+  (refresh-paren-highlight self pointer))
