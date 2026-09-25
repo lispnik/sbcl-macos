@@ -23,7 +23,9 @@ on:
 jobs:
   check:
     name: parse, compile and run
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: 24.04's apt ECL is 21.2.1, whose Gray streams have no
+    # STREAM-LINE-LENGTH, so streams.lisp fails to read.  26.04 ships 24.5.
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
 
     steps:
