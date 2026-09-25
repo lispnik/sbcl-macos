@@ -13,12 +13,20 @@
 (in-package #:lisp-listener)
 
 (defun run-paredit-at-caret (view pointer command)
-  "Run COMMAND on the input region.  True when it did something.
+  "Run COMMAND on the input region, if paredit is on.  True when it did
+something.
 
 NIL means the key was not handled and the caller should let the toolkit have
-it.  The caret must be in the input region: paredit does not edit the
-transcript, and a caret above the prompt is somebody reading, not typing."
-  (when (and *paredit-enabled* command view pointer)
+it."
+  (and *paredit-enabled* (run-command-at-caret view pointer command)))
+
+(defun run-command-at-caret (view pointer command)
+  "Run COMMAND on the input region, whether or not paredit is on.  True when it
+did something.
+
+The caret must be in the input region: a command does not edit the transcript,
+and a caret above the prompt is somebody reading, not typing."
+  (when (and command view pointer)
     (let ((start (view-input-start view))
           (caret (caret-index pointer)))
       (when (and start caret (>= caret start))
@@ -42,3 +50,20 @@ The front ends' insertion hooks call this with no modifiers, and their key
 handlers with them."
   (run-paredit-at-caret view pointer
                         (paredit-command-for character modifiers)))
+
+(defun input-first-column (view pointer)
+  "The transcript column the input region starts in: the prompt's width, give
+or take whatever output has arrived on the prompt's line since."
+  (let* ((start (view-input-start view))
+         (from (max 0 (- start 512)))
+         (line (transcript-substring pointer from (- start from))))
+    (- (length line) (1+ (or (position #\Newline line :from-end t) -1)))))
+
+(defun insert-indented-newline (view pointer)
+  "Option-Return: break the line at the caret without submitting, indented.
+True when it did; NIL, with the caret above the prompt, leaves the key to the
+toolkit."
+  (let ((*indent-first-column* (input-first-column view pointer))
+        (*indent-package* (listener-completion-package
+                           (listener-for-view-object view))))
+    (run-command-at-caret view pointer 'newline-and-indent)))

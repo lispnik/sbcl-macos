@@ -51,7 +51,7 @@
   ;; iOS's on ECL.  Nothing here reaches either -- they are stubs all the way
   ;; down -- but loading the one that ships on this Lisp keeps it honest.
   (dolist (name (append '("package" "impl" "main-thread" "queue" "listener"
-                          "history" "sexp" "paredit" "keymap" "transcript"
+                          "history" "sexp" "paredit" "keymap" "indent" "transcript"
                           "completion" "paren-highlight" "paredit-view" "history-search"
                           "streams" "config"
                           "restarts" "repl")
@@ -513,6 +513,51 @@ leaves the caret as much as on the text -- and a test that says
   (check (equal '((1 . 2) (3 . 4)) (sexp-spans "(a b)" 1 4))
          "the children of a list are its spans"))
 
+(defmacro cl-user::body-after-one (thing &body body)
+  "A macro nothing else knows about, so its indentation can only have come from
+its lambda list."
+  `(list ,thing ,@body))
+
+(defun case-indent ()
+  "Option-Return: the new line, and the column it starts in."
+  (format t "~&~%Indentation: Option-Return breaks the line and indents it.~%")
+  (finish-output)
+  (flet ((nl (before after label)
+           (check-edit 'newline-and-indent before
+                       (substitute #\Newline #\/ after) label)))
+    ;; The example that asked for this, a line at a time.
+    (nl "(defun foo (n)|)" "(defun foo (n)/  |)" "a DEFUN's body is two in")
+    (nl (format nil "(defun foo (n)~%  (lambda ()|))")
+        "(defun foo (n)/  (lambda ()/    |))" "and so is a LAMBDA's, inside it")
+    (nl "(list a|)" "(list a/      |)" "a call lines up under its first argument")
+    (nl "(foo :key 1|)" "(foo :key 1/     |)" "an unknown function is a call")
+    (nl "((a b)|)" "((a b)/ |)" "a list in operator position is one in")
+    (nl "'(a b|)" "'(a b/  |)" "and so is a quoted list, whatever it starts with")
+    (nl "(let ((x 1))|)" "(let ((x 1))/  |)" "LET, which has no lambda list to ask")
+    (nl "(destructuring-bind (a b)|)" "(destructuring-bind (a b)/                    |)"
+        "a distinguished argument not yet written lines up with the first")
+    (nl "(unwind-protect|)" "(unwind-protect/    |)"
+        "and with none on the line, it is four in")
+    (nl "(defmethod foo :around ((x t))|)" "(defmethod foo :around ((x t))/  |)"
+        "anything named DEF... is indented like DEFUN")
+    (nl "(with-anything (x)|)" "(with-anything (x)/  |)"
+        "a WITH-... nobody has defined is taken to have one argument")
+    (let ((*indent-package* (find-package "COMMON-LISP-USER")))
+      (nl "(body-after-one x|)" "(body-after-one x/  |)"
+          "a macro's own &BODY says where its body starts"))
+    (nl "(list \"(\" a|)" "(list \"(\" a/      |)" "a paren in a string is not a paren")
+    (nl "(list a |  b)" "(list a/      |b)" "spaces either side of the break go")
+    (nl "(format t \"a|b\")" "(format t \"a/|b\")" "inside a string, only the newline")
+    (nl "(a) |" "(a)/|" "at top level, column 0")
+    (let ((*indent-first-column* 9))
+      (nl "(defun foo ()|)" "(defun foo ()/           |)"
+          "the prompt's width counts on the first line")
+      (nl (format nil "(list~%  (a b|))") "(list/  (a b/     |))"
+          "and not on the lines after it"))
+    (let ((*auto-indent-enabled* nil))
+      (nl "(defun foo ()|)" "(defun foo ()/|)"
+          "with indentation off the line still breaks, at column 0"))))
+
 (defun case-paredit ()
   "The commands, each judged on the text and the caret it leaves."
   (format t "~&~%Paredit: balanced insertion, motion, and structure.~%")
@@ -734,7 +779,7 @@ bound away from the front end's own -- a test has no business writing into
                 case-toplevel-restart-index
                 case-interactive-restarts-are-marked
                 case-two-listeners case-nil-is-nobody case-history case-completion
-                case-sexp case-paredit case-keymap case-init-file
+                case-sexp case-paredit case-indent case-keymap case-init-file
                 case-history-search
                 case-prompt-is-recorded))
   (funcall case))

@@ -33,6 +33,7 @@
                  (:file "sexp")
                  (:file "paredit")
                  (:file "keymap")
+                 (:file "indent")
                  (:file "transcript")
                  (:file "completion")
                  (:file "paren-highlight")

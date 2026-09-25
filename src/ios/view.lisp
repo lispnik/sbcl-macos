@@ -265,7 +265,11 @@ time: a pointer made at load time would not survive into the app.")
                              (key-command "k" "listenerClear:"
                                           +ui-key-modifier-command+)
                              (key-command "r" "listenerHistory:"
-                                          +ui-key-modifier-command+)))
+                                          +ui-key-modifier-command+)
+                             ;; Option-Return, as on the Mac: a new line,
+                             ;; indented, and nothing submitted.
+                             (key-command (string #\Return) "listenerNewline:"
+                                          +ui-key-modifier-alternate+)))
                 (objc:invoke array "addObject:" command))
               ;; And one per CHORD in *PAREDIT-KEYS*.  The bare characters are
               ;; not here: they arrive as text, through the delegate below.
@@ -333,6 +337,9 @@ key in that position on a keyboard attached to an iPad."
 
 (define-listener-method ("listenerHistory:" :void) ((sender objc:objc-object-pointer))
   (open-history-popup *listener*))
+
+(define-listener-method ("listenerNewline:" :void) ((sender objc:objc-object-pointer))
+  (insert-indented-newline self pointer))
 
 ;;; One IMP for every paredit chord: the UIKeyCommand says which key it was, so
 ;;; the keymap can be consulted exactly as the Mac's -keyDown: does.

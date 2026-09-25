@@ -25,6 +25,11 @@ input region was before src/paredit.lisp existed.")
 (defparameter *paren-highlight-enabled* t
   "Whether the parenthesis under the caret and its partner are tinted.")
 
+(defparameter *auto-indent-enabled* t
+  "Whether Option-Return indents the new line.  NIL still breaks the line, at
+column 0: the key is how a form is written over several lines at all, so it
+does not stop working when the indentation is off.")
+
 (defparameter *paredit-keys*
   '(("("         . insert-pair)
     (")"         . close-or-skip)

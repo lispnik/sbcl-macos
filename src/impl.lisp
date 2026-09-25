@@ -56,6 +56,13 @@ losing it costs an ellipsis in the restart list and nothing else."
    #+sbcl (sb-kernel::restart-interactive-function restart)
    #+ecl (si::restart-interactive-function restart)))
 
+(defun macro-lambda-list (symbol)
+  "The lambda list of the macro SYMBOL names, or NIL.  Asked by the indenter,
+which wants to know whether there is an &BODY in it."
+  (ignore-errors
+   #+sbcl (sb-kernel:%fun-lambda-list (macro-function symbol))
+   #+ecl (ext:function-lambda-list symbol)))
+
 (defun exit-process (code)
   "Leave now, without unwinding: the caller has nothing left to clean up and a
 thread still blocked in READ would otherwise hold the process open."

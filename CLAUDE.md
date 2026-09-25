@@ -127,8 +127,8 @@ Three systems in `lisp-listener.asd`, each `:serial t`, and **the component
 order is load-bearing**:
 
 - `lisp-listener/core` — `src/`: `package impl main-thread queue listener history
-  sexp paredit keymap transcript completion paren-highlight paredit-view streams
-  config restarts repl`. No toolkit; SBCL and ECL.
+  sexp paredit keymap indent transcript completion paren-highlight paredit-view
+  history-search streams config restarts repl`. No toolkit; SBCL and ECL.
 - `lisp-listener` — the core plus `src/macos/`: `view window restarts-panel
   screenshot app`. The name it always had.
 - `lisp-listener/ios` — the core plus `src/ios/`: `view restarts-sheet app`.
@@ -160,12 +160,21 @@ NSTextView and UITextView share.
 - `src/paredit.lisp` — the commands, each `(text offset) → (values text offset)`
   or NIL to decline. Balanced insertion is written here; the structural ones wrap
   `apply-structural-edit`. Pure, so `make test` covers all of it.
-- `src/keymap.lisp` — `*paredit-enabled*`, `*paren-highlight-enabled*` and
-  `*paredit-keys*`, an alist of key spec (`"("`, `"C-)"`, `"C-M-f"`,
+- `src/keymap.lisp` — `*paredit-enabled*`, `*paren-highlight-enabled*`,
+  `*auto-indent-enabled*` and `*paredit-keys*`, an alist of key spec (`"("`, `"C-)"`, `"C-M-f"`,
   `"Backspace"`) to command. `(setf (paredit-key "C-(") 'slurp-backward)` rebinds;
   a command not in `*paredit-commands*` is refused.
+- `src/indent.lisp` — `newline-and-indent`, a command of the same shape: a body
+  form two in, a call under its first argument, anything else one in. Whether an
+  operator takes a body is asked of the live image (`&body` in the macro's lambda
+  list, through `macro-lambda-list` in `impl.lisp`), with a table for special
+  operators and Emacs's `def…` rule. Option-Return on both front ends: AppKit
+  already sends it to `-insertNewlineIgnoringFieldEditor:`, and iOS has a
+  `UIKeyCommand`. Plain Return still submits.
 - `src/paredit-view.lisp` — the one place a command meets a view: character
-  offsets to UTF-16 units, the read-only guard, the write-back.
+  offsets to UTF-16 units, the read-only guard, the write-back. It also binds the
+  prompt's width for the indenter: the input's first line starts after
+  `CL-USER> `, so its columns are not its offsets.
 - `src/paren-highlight.lisp` — the tint under the caret's paren and its partner,
   red when it has none. Input region only.
 - `src/config.lisp` — `init.lisp`, read from `history-directory` at startup, so a

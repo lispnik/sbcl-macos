@@ -90,6 +90,13 @@ that they can be untinted.  Thread 1 only; see src/paren-highlight.lisp."))
     ((sender objc:objc-object-pointer))
   (submit-input self pointer))
 
+;;; Option-Return, and Ctrl-O: AppKit's standard key bindings send both here.
+;;; The line is broken and indented, and nothing is submitted.
+(define-listener-method ("insertNewlineIgnoringFieldEditor:" :void)
+    ((sender objc:objc-object-pointer))
+  (unless (insert-indented-newline self pointer)
+    (objc:invoke (objc:current-super) "insertNewlineIgnoringFieldEditor:" sender)))
+
 (define-listener-method ("moveUp:" :void)
     ((sender objc:objc-object-pointer))
   (unless (and (caret-on-first-input-line-p self pointer)
